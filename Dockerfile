@@ -9,7 +9,7 @@ COPY web/ ./
 RUN npm run build
 
 # 2. Build a static Go binary with the UI embedded.
-FROM golang:1.26-alpine AS go
+FROM golang:1.27-alpine AS go
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
