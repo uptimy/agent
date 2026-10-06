@@ -21,8 +21,10 @@ import (
 	"github.com/uptimy/agent/internal/discovery"
 	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/filesync"
+	"github.com/uptimy/agent/internal/investigation"
 	"github.com/uptimy/agent/internal/kube"
 	"github.com/uptimy/agent/internal/managed"
+	"github.com/uptimy/agent/internal/mcp"
 	"github.com/uptimy/agent/internal/notify"
 	"github.com/uptimy/agent/internal/scheduler"
 	"github.com/uptimy/agent/internal/store"
@@ -123,6 +125,12 @@ func run(log *slog.Logger) error {
 	srv := &api.Server{
 		Config: cfg, Version: version, Store: st, Scheduler: sched,
 		Sender: sender, Hub: hub, Log: log, Watchdog: watchdog, KubeAvailable: kc != nil, Discovery: disc,
+	}
+	if cfg.MCPEnabled {
+		srv.MCP = mcp.New(investigation.New(st, sched, cfg.RetentionDays), st, mcp.Options{
+			AllowedHosts: cfg.MCPAllowedHosts, MaxConcurrent: cfg.MCPMaxConcurrent, Log: log,
+		})
+		log.Info("read-only MCP enabled", "path", "/mcp")
 	}
 	srv.RestorePaused(ctx)
 	go watchdog.Run(ctx)

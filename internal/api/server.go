@@ -34,6 +34,8 @@ type Server struct {
 	KubeAvailable bool
 	// Discovery is nil unless Kubernetes discovery runs.
 	Discovery *discovery.Discoverer
+	// MCP is an optional independently authenticated evidence adapter.
+	MCP http.Handler
 
 	limiter *loginLimiter
 	connect connectFlows
@@ -45,6 +47,9 @@ type Server struct {
 func (s *Server) Handler(ui http.Handler) http.Handler {
 	s.limiter = newLoginLimiter()
 	mux := http.NewServeMux()
+	if s.MCP != nil {
+		mux.Handle("/mcp", s.MCP)
+	}
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))

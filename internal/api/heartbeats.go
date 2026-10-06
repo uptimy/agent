@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/uptimy/agent/internal/investigation"
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/scheduler"
 	"github.com/uptimy/agent/internal/store"
@@ -29,10 +30,11 @@ type heartbeatSummary struct {
 }
 
 func (s *Server) summarizeHeartbeat(r *http.Request, m monitor.Monitor) (heartbeatSummary, error) {
+	status, inMaintenance := investigation.CurrentView(s.Scheduler, m)
 	sum := heartbeatSummary{
-		Monitor: redactForViewer(r, m), Status: s.Scheduler.Status(m),
+		Monitor: redactForViewer(r, m), Status: status,
 		Schedule: m.Heartbeat.Describe(), Tracking: s.Scheduler.Heartbeat(m),
-		InMaintenance: s.Scheduler.InMaintenance(m.ID),
+		InMaintenance: inMaintenance,
 	}
 	recent, err := s.Store.RecentRuns(r.Context(), m.ID, recentRuns)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Config is the runtime configuration. Everything comes from env vars so the
@@ -25,7 +26,10 @@ type Config struct {
 	MonitorsFile string
 	MonitorsYAML string
 
-	RetentionDays int
+	RetentionDays    int
+	MCPEnabled       bool
+	MCPAllowedHosts  []string
+	MCPMaxConcurrent int
 
 	// KubernetesDiscovery creates monitors for resources labeled
 	// upti.my/monitor=true when running in a cluster. On by default: nothing
@@ -86,6 +90,23 @@ func Load() (Config, error) {
 	}
 	if c.RetentionDays < 1 {
 		return c, fmt.Errorf("RETENTION_DAYS must be at least 1")
+	}
+	if c.MCPEnabled, err = envBool("MCP_ENABLED", false); err != nil {
+		return c, err
+	}
+	if c.MCPMaxConcurrent, err = envInt("MCP_MAX_CONCURRENT", 4); err != nil {
+		return c, err
+	}
+	if c.MCPMaxConcurrent < 1 || c.MCPMaxConcurrent > 32 {
+		return c, fmt.Errorf("MCP_MAX_CONCURRENT must be between 1 and 32")
+	}
+	for _, host := range strings.Split(os.Getenv("MCP_ALLOWED_HOSTS"), ",") {
+		if host = strings.TrimSpace(host); host != "" {
+			c.MCPAllowedHosts = append(c.MCPAllowedHosts, host)
+		}
+	}
+	if c.MCPEnabled && len(c.MCPAllowedHosts) == 0 {
+		return c, fmt.Errorf("MCP_ALLOWED_HOSTS is required when MCP_ENABLED=true")
 	}
 	return c, nil
 }

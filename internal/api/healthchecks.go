@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/uptimy/agent/internal/investigation"
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/store"
 )
@@ -26,9 +27,10 @@ type healthcheckSummary struct {
 }
 
 func (s *Server) summarizeHealthcheck(r *http.Request, m monitor.Monitor) (healthcheckSummary, error) {
+	status, inMaintenance := investigation.CurrentView(s.Scheduler, m)
 	sum := healthcheckSummary{
-		Monitor: redactForViewer(r, m), Status: s.Scheduler.Status(m), Target: m.Describe(),
-		InMaintenance: s.Scheduler.InMaintenance(m.ID),
+		Monitor: redactForViewer(r, m), Status: status, Target: m.Describe(),
+		InMaintenance: inMaintenance,
 	}
 	recent, err := s.Store.RecentResults(r.Context(), m.ID, recentResults)
 	if err != nil {

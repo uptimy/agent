@@ -244,6 +244,8 @@ Badges are served while the status page is on, and only for monitors on it:
 
 ## API
 
+For optional read-only AI investigation over Streamable HTTP, see [MCP support](MCP.md).
+
 Everything in the UI goes through a JSON API under `/api`. For scripts and CI, create a token under **Account → API tokens** and send it as a bearer token:
 
 ```bash
