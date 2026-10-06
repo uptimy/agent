@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	// connectCallbackPath must match AGENT_CALLBACK_PATH in upti.my-app.
+	// connectCallbackPath must match AGENT_CALLBACK_PATH in upti.my-api's
+	// utils/oauth.ts, which only lets the agent's OAuth client return here.
 	connectCallbackPath = "/uptimy/connected"
 	connectStateTTL     = 10 * time.Minute
 )

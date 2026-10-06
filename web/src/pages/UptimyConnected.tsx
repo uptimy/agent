@@ -7,7 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { UptimyMark } from "@/components/brand";
 
-/** Must match AGENT_CALLBACK_PATH in upti.my-app's consent page. */
+/** Must match connectCallbackPath in internal/api/uptimy.go. */
 const CONNECT_CALLBACK_PATH = "/uptimy/connected";
 
 type Handoff = { state: string; code: string; error: string };
