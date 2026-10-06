@@ -10,21 +10,21 @@ import { UptimyMark } from "@/components/brand";
 /** Must match AGENT_CALLBACK_PATH in upti.my-app's consent page. */
 const CONNECT_CALLBACK_PATH = "/uptimy/connected";
 
-type Handoff = { state: string; key: string; error: string };
+type Handoff = { state: string; code: string; error: string };
 
 /**
- * Uptimy's consent page sends the browser here with the agent key and state
- * in the URL fragment (never sent to any server). Read it once at page load,
- * then remove it from the address bar and history straight away, before
- * anything else renders, so the key doesn't linger or leak via screenshots.
- * Module-level so it survives a sign-in screen shown first, and React
- * StrictMode's double-rendering in development.
+ * Uptimy's consent page sends the browser here with a one-time code and the
+ * state (OAuth). The agent's server exchanges the code for the agent key with
+ * a PKCE verifier only it holds, so the key never reaches the browser. Read
+ * the parameters once at page load and remove them from the address bar and
+ * history straight away. Module-level so it survives a sign-in screen shown
+ * first, and React StrictMode's double-rendering in development.
  */
 const handoff: Handoff | null = (() => {
-  if (window.location.pathname !== CONNECT_CALLBACK_PATH || !window.location.hash) return null;
-  const p = new URLSearchParams(window.location.hash.slice(1));
+  if (window.location.pathname !== CONNECT_CALLBACK_PATH || !window.location.search) return null;
+  const p = new URLSearchParams(window.location.search);
   window.history.replaceState(window.history.state, "", window.location.pathname);
-  return { state: p.get("state") ?? "", key: p.get("key") ?? "", error: p.get("error") ?? "" };
+  return { state: p.get("state") ?? "", code: p.get("code") ?? "", error: p.get("error") ?? "" };
 })();
 
 // The handoff can only be used once (the agent consumes the state), so share
@@ -42,13 +42,13 @@ export function UptimyConnected() {
   const [outcome, setOutcome] = useState<Outcome>(() => {
     if (!handoff) return { kind: "failed", message: "Nothing to finish here. Start again from Settings." };
     if (handoff.error === "access_denied") return { kind: "cancelled" };
-    if (handoff.error || !handoff.key) return { kind: "failed", message: "Uptimy didn't complete the connection." };
+    if (handoff.error || !handoff.code) return { kind: "failed", message: "Uptimy didn't complete the connection." };
     return { kind: "working" };
   });
 
   useEffect(() => {
     if (outcome.kind !== "working" || !handoff) return;
-    finishing ??= api.finishUptimyConnect(handoff.state, handoff.key);
+    finishing ??= api.finishUptimyConnect(handoff.state, handoff.code);
     finishing
       .then((status) => {
         qc.setQueryData(["uptimy"], status);

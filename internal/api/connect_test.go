@@ -1,10 +1,13 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -13,17 +16,36 @@ import (
 )
 
 // fakeUptimy stands in for api.upti.my and heartbeats.upti.my, following the
-// real endpoints' contracts (GET/DELETE /v1/api/api-key, the API-key heartbeat
-// routes, and check-ins on /v1/monitors/:publicId).
+// real endpoints' contracts (POST /oauth/token, GET/DELETE /v1/api/api-key,
+// the API-key heartbeat routes, and check-ins on /v1/monitors/:publicId).
 type fakeUptimy struct {
 	*httptest.Server
 	mu         sync.Mutex
 	keys       map[string]string // key -> scope ("" = revoked)
+	codes      map[string]fakeCode
+	consent    fakeCode          // the challenge and redirect from the last consent link
 	heartbeats map[string]string // clientRef -> uuid
 	monitors   map[string]*fakeHeartbeat
 	deleted    []string
 	checkIns   int
 	down       bool
+}
+
+// fakeCode is a one-time code the consent page would issue for a key.
+type fakeCode struct {
+	key, challenge, redirect string
+}
+
+// approve plays the user approving on the consent page: it issues a code for
+// key, bound to the last consent link's PKCE challenge and redirect URI.
+func (f *fakeUptimy) approve(key string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	code := "code-" + strconv.Itoa(len(f.codes)+1)
+	c := f.consent
+	c.key = key
+	f.codes[code] = c
+	return code
 }
 
 // fakeHeartbeat is the part of a heartbeat monitor the agent reads and writes.
@@ -45,7 +67,7 @@ func (h *fakeHeartbeat) json(uuid string) map[string]any {
 }
 
 func newFakeUptimy(t *testing.T) *fakeUptimy {
-	f := &fakeUptimy{keys: map[string]string{}, heartbeats: map[string]string{}, monitors: map[string]*fakeHeartbeat{}}
+	f := &fakeUptimy{keys: map[string]string{}, codes: map[string]fakeCode{}, heartbeats: map[string]string{}, monitors: map[string]*fakeHeartbeat{}}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Close)
 	return f
@@ -66,6 +88,21 @@ func (f *fakeUptimy) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.checkIns++
 		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if r.URL.Path == "/oauth/token" {
+		// Single use, bound to the PKCE verifier and redirect URI, like the real one.
+		r.ParseForm()
+		code, ok := f.codes[r.PostForm.Get("code")]
+		delete(f.codes, r.PostForm.Get("code"))
+		sum := sha256.Sum256([]byte(r.PostForm.Get("code_verifier")))
+		if !ok || r.PostForm.Get("client_id") != "uptimy-agent" || r.PostForm.Get("redirect_uri") != code.redirect ||
+			base64.RawURLEncoding.EncodeToString(sum[:]) != code.challenge {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant", "error_description": "The authorization code is invalid or expired"})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"access_token": code.key, "token_type": "Bearer", "scope": "agent"})
 		return
 	}
 	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -124,8 +161,9 @@ func (f *fakeUptimy) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // start runs the first half of the flow and returns the state from the
-// consent link, checking the link itself on the way.
-func start(t *testing.T, c *client) string {
+// consent link, checking the link itself on the way. The link's PKCE challenge
+// and redirect URI are what the fake's next approved code is bound to.
+func start(t *testing.T, c *client, uptimy *fakeUptimy) string {
 	t.Helper()
 	code, body := c.do("POST", "/api/uptimy/connect/start", map[string]string{"origin": "https://agent.acme.test"})
 	if code != 200 {
@@ -136,10 +174,14 @@ func start(t *testing.T, c *client) string {
 		t.Fatal(err)
 	}
 	q := u.Query()
-	if u.Path != "/cli/authorize" || q.Get("client") != "agent" || q.Get("host") != "k8s-prod" ||
-		q.Get("return_to") != "https://agent.acme.test/uptimy/connected" || len(q.Get("state")) < 32 {
+	if u.Path != "/oauth/authorize" || q.Get("response_type") != "code" || q.Get("client_id") != "uptimy-agent" ||
+		q.Get("host") != "k8s-prod" || q.Get("redirect_uri") != "https://agent.acme.test/uptimy/connected" ||
+		q.Get("code_challenge_method") != "S256" || len(q.Get("code_challenge")) != 43 || len(q.Get("state")) < 32 {
 		t.Fatalf("unexpected consent link %s", u)
 	}
+	uptimy.mu.Lock()
+	uptimy.consent = fakeCode{challenge: q.Get("code_challenge"), redirect: q.Get("redirect_uri")}
+	uptimy.mu.Unlock()
 	return q.Get("state")
 }
 
@@ -159,25 +201,34 @@ func TestConnectToUptimy(t *testing.T) {
 	}
 
 	// A state that wasn't issued here is refused.
-	if code, _ := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": strings.Repeat("x", 43), "key": "upt_agent1"}); code != 400 {
+	if code, _ := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": strings.Repeat("x", 43), "code": uptimy.approve("upt_agent1")}); code != 400 {
 		t.Fatalf("forged state accepted: %d", code)
 	}
 
+	// A code issued for another consent link (another PKCE challenge) is refused.
+	state := start(t, c, uptimy)
+	start(t, c, uptimy)
+	stolen := uptimy.approve("upt_agent1") // bound to the second link's challenge
+	if code, body := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "code": stolen}); code != 502 {
+		t.Fatalf("code with the wrong verifier accepted: %d %v", code, body)
+	}
+
 	// A full-access key is never kept, even with a valid state.
-	if code, body := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": start(t, c), "key": "upt_full"}); code != 400 {
+	state = start(t, c, uptimy)
+	if code, body := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "code": uptimy.approve("upt_full")}); code != 400 {
 		t.Fatalf("full key accepted: %d %v", code, body)
 	}
 
 	// The real flow.
-	state := start(t, c)
-	code, body := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "key": "upt_agent1"})
+	state = start(t, c, uptimy)
+	code, body := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "code": uptimy.approve("upt_agent1")})
 	if code != 200 || body["enabled"] != true || body["last_ok"] != true {
 		t.Fatalf("finish: %d %v", code, body)
 	}
 	if acct, _ := body["account"].(map[string]any); acct == nil || acct["workspace_name"] != "Acme" || acct["connected_by"] != "admin" {
 		t.Fatalf("account not reported: %v", body["account"])
 	}
-	if code, _ := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "key": "upt_agent1"}); code != 400 {
+	if code, _ := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "code": uptimy.approve("upt_agent1")}); code != 400 {
 		t.Fatalf("state reused: %d", code)
 	}
 	if uptimy.checkIns != 1 || len(uptimy.heartbeats) != 1 {
@@ -202,7 +253,8 @@ func TestConnectToUptimy(t *testing.T) {
 
 	// Reconnecting (e.g. after the key was revoked) reuses the heartbeat and
 	// revokes the old key.
-	if code, _ := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": start(t, c), "key": "upt_agent2"}); code != 200 {
+	state = start(t, c, uptimy)
+	if code, _ := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "code": uptimy.approve("upt_agent2")}); code != 200 {
 		t.Fatalf("reconnect: %d", code)
 	}
 	if len(uptimy.heartbeats) != 1 || uptimy.keys["upt_agent1"] != "" {
@@ -227,7 +279,8 @@ func TestDisconnectWhenUptimyIsDown(t *testing.T) {
 		AgentName: "k8s-prod",
 	})
 	c.login("admin", adminPassword)
-	if code, _ := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": start(t, c), "key": "upt_agent1"}); code != 200 {
+	state := start(t, c, uptimy)
+	if code, _ := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "code": uptimy.approve("upt_agent1")}); code != 200 {
 		t.Fatalf("connect: %d", code)
 	}
 

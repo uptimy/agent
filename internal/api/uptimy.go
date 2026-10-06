@@ -109,10 +109,13 @@ func (s *Server) connectHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 // pendingConnect is a "Connect to Uptimy" handoff in progress. The state is
-// only valid for the admin who started it, once, for a few minutes.
+// only valid for the admin who started it, once, for a few minutes. The PKCE
+// verifier never leaves the agent's server.
 type pendingConnect struct {
-	userID  int64
-	expires time.Time
+	userID      int64
+	expires     time.Time
+	verifier    string
+	redirectURI string
 }
 
 type connectFlows struct {
@@ -120,7 +123,7 @@ type connectFlows struct {
 	pending map[string]pendingConnect // by state
 }
 
-func (f *connectFlows) add(state string, userID int64) {
+func (f *connectFlows) add(state string, p pendingConnect) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.pending == nil {
@@ -132,25 +135,27 @@ func (f *connectFlows) add(state string, userID int64) {
 			delete(f.pending, k)
 		}
 	}
-	f.pending[state] = pendingConnect{userID: userID, expires: now.Add(connectStateTTL)}
+	p.expires = now.Add(connectStateTTL)
+	f.pending[state] = p
 }
 
 // take consumes a state if it exists, belongs to userID and hasn't expired.
-func (f *connectFlows) take(state string, userID int64) bool {
+func (f *connectFlows) take(state string, userID int64) (pendingConnect, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for k, p := range f.pending {
 		if subtle.ConstantTimeCompare([]byte(k), []byte(state)) == 1 {
 			delete(f.pending, k)
-			return p.userID == userID && time.Now().Before(p.expires)
+			return p, p.userID == userID && time.Now().Before(p.expires)
 		}
 	}
-	return false
+	return pendingConnect{}, false
 }
 
-// startConnect begins "Connect to Uptimy": it returns the Uptimy consent page
-// to open. The browser comes back to <origin>/uptimy/connected with an agent
-// key and the state in the URL fragment.
+// startConnect begins "Connect to Uptimy" (OAuth with PKCE): it returns the
+// Uptimy consent page to open. The browser comes back to
+// <origin>/uptimy/connected with a one-time code and the state, which the page
+// hands to finishConnect.
 func (s *Server) startConnect(w http.ResponseWriter, r *http.Request) {
 	if s.rejectIfEnvManaged(w) {
 		return
@@ -171,39 +176,46 @@ func (s *Server) startConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	state := randomToken(32)
-	s.connect.add(state, currentUser(r).ID)
+	verifier, challenge := connect.NewPKCE()
+	redirectURI := origin.Scheme + "://" + origin.Host + connectCallbackPath
+	s.connect.add(state, pendingConnect{userID: currentUser(r).ID, verifier: verifier, redirectURI: redirectURI})
 
 	q := url.Values{}
-	q.Set("client", "agent")
-	q.Set("return_to", origin.Scheme+"://"+origin.Host+connectCallbackPath)
+	q.Set("response_type", "code")
+	q.Set("client_id", connect.OAuthClientID)
+	q.Set("redirect_uri", redirectURI)
+	q.Set("code_challenge", challenge)
+	q.Set("code_challenge_method", "S256")
 	q.Set("state", state)
 	q.Set("host", s.Config.AgentName)
 	writeJSON(w, http.StatusOK, map[string]string{
-		"authorize_url": strings.TrimRight(s.Config.UptimyAppURL, "/") + "/cli/authorize?" + q.Encode(),
+		"authorize_url": strings.TrimRight(s.Config.UptimyAppURL, "/") + "/oauth/authorize?" + q.Encode(),
 	})
 }
 
-// finishConnect completes "Connect to Uptimy" with the key handed back by the
-// consent page: it verifies the key, creates (or reclaims) the agent's
-// heartbeat, checks in once, and saves the connection.
+// finishConnect completes "Connect to Uptimy" with the code the consent page
+// sent back: it exchanges the code for the agent key, verifies the key,
+// creates (or reclaims) the agent's heartbeat, checks in once, and saves the
+// connection.
 func (s *Server) finishConnect(w http.ResponseWriter, r *http.Request) {
 	if s.rejectIfEnvManaged(w) {
 		return
 	}
 	var in struct {
 		State string `json:"state"`
-		Key   string `json:"key"`
+		Code  string `json:"code"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
 	user := currentUser(r)
-	if !s.connect.take(in.State, user.ID) {
+	pending, ok := s.connect.take(in.State, user.ID)
+	if !ok {
 		writeError(w, http.StatusBadRequest, "this connection attempt expired or wasn't started here; start again from Settings")
 		return
 	}
-	if !strings.HasPrefix(in.Key, "upt_") {
-		writeError(w, http.StatusBadRequest, "Uptimy didn't return an agent key")
+	if in.Code == "" {
+		writeError(w, http.StatusBadRequest, "Uptimy didn't return a code")
 		return
 	}
 
@@ -211,7 +223,12 @@ func (s *Server) finishConnect(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	client := connect.NewClient(s.Config.UptimyAPIURL, s.Config.UptimyHeartbeatsURL)
 
-	who, err := client.WhoAmI(ctx, in.Key)
+	key, err := client.ExchangeCode(ctx, in.Code, pending.verifier, pending.redirectURI)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "couldn't get the agent key from Uptimy: "+err.Error())
+		return
+	}
+	who, err := client.WhoAmI(ctx, key)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "couldn't verify the key with Uptimy: "+err.Error())
 		return
@@ -226,7 +243,7 @@ func (s *Server) finishConnect(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	hb, err := client.EnsureHeartbeat(ctx, in.Key, "Uptimy Agent · "+s.Config.AgentName, installID)
+	hb, err := client.EnsureHeartbeat(ctx, key, "Uptimy Agent · "+s.Config.AgentName, installID)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "couldn't create the heartbeat in Uptimy: "+err.Error())
 		return
@@ -237,7 +254,7 @@ func (s *Server) finishConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conn := connect.Connection{
-		APIKey:        in.Key,
+		APIKey:        key,
 		KeyUUID:       who.UUID,
 		WorkspaceName: who.Workspace.Name,
 		HeartbeatUUID: hb.UUID,

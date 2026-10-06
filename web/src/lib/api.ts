@@ -642,8 +642,8 @@ export const api = {
   endUptimyMaintenance: () => request<UptimyAlerting>("DELETE", "/api/uptimy/heartbeat/maintenance"),
   startUptimyConnect: (origin: string) =>
     request<{ authorize_url: string }>("POST", "/api/uptimy/connect/start", { origin }),
-  finishUptimyConnect: (state: string, key: string) =>
-    request<UptimyCheckIn>("POST", "/api/uptimy/connect/finish", { state, key }),
+  finishUptimyConnect: (state: string, code: string) =>
+    request<UptimyCheckIn>("POST", "/api/uptimy/connect/finish", { state, code }),
 
   announcement: () => request<Announcement | null>("GET", "/api/status-page/announcement"),
   saveAnnouncement: (a: { title: string; message: string; show_until: string | null }) =>

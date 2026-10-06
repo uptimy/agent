@@ -18,7 +18,8 @@ func connectedAgent(t *testing.T) (*client, *fakeUptimy, *fakeHeartbeat) {
 		AgentName: "k8s-prod",
 	})
 	c.login("admin", adminPassword)
-	if code, body := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": start(t, c), "key": "upt_agent1"}); code != 200 {
+	state := start(t, c, uptimy)
+	if code, body := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "code": uptimy.approve("upt_agent1")}); code != 200 {
 		t.Fatalf("connect: %d %v", code, body)
 	}
 	for _, hb := range uptimy.monitors {

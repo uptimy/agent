@@ -3,6 +3,9 @@ package connect
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,6 +53,62 @@ type KeyInfo struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"workspace"`
+}
+
+// OAuthClientID is the agent's built-in OAuth client in Uptimy
+// (upti.my-api utils/oauth.ts).
+const OAuthClientID = "uptimy-agent"
+
+// NewPKCE returns an RFC 7636 verifier and its S256 challenge.
+func NewPKCE() (verifier, challenge string) {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	verifier = base64.RawURLEncoding.EncodeToString(b)
+	sum := sha256.Sum256([]byte(verifier))
+	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// ExchangeCode trades the one-time code from Uptimy's consent page for the
+// agent key (OAuth with PKCE). The agent's server does this itself, so the key
+// never passes through the browser, and Uptimy creates it only now.
+func (c *Client) ExchangeCode(ctx context.Context, code, verifier, redirectURI string) (string, error) {
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("client_id", OAuthClientID)
+	form.Set("code", code)
+	form.Set("redirect_uri", redirectURI)
+	form.Set("code_verifier", verifier)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.APIURL+"/oauth/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "uptimy-agent")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err // don't echo URLs into user-facing errors
+		}
+		return "", fmt.Errorf("couldn't reach Uptimy: %w", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		AccessToken      string `json:"access_token"`
+		ErrorDescription string `json:"error_description"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out)
+	if resp.StatusCode != http.StatusOK {
+		if out.ErrorDescription != "" {
+			return "", fmt.Errorf("Uptimy: %s", out.ErrorDescription)
+		}
+		return "", fmt.Errorf("Uptimy returned HTTP %d", resp.StatusCode)
+	}
+	if !strings.HasPrefix(out.AccessToken, "upt_") {
+		return "", errors.New("Uptimy didn't return an agent key")
+	}
+	return out.AccessToken, nil
 }
 
 // WhoAmI verifies the key and returns its workspace.
