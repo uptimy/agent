@@ -4,6 +4,11 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-07
+
+### Changed
+- **Connect to Uptimy** now signs in with OAuth. Uptimy's consent page sends the browser back with a one-time code, and the agent's server exchanges it, with a secret it never shares, for the agent key. The key never passes through your browser, and Uptimy only creates it once you approve, so a connection you abandon leaves nothing behind. Connecting while signed out of Uptimy, or without an Uptimy account yet, now brings you back to the consent page after you sign in or sign up. Agents up to 0.1.7 keep connecting the old way.
+
 ## [0.1.7] - 2026-10-04
 
 ### Added
@@ -95,7 +100,8 @@ First public release.
 - API tokens (full or read-only) for scripts and CI.
 - Import monitors and notifications from Uptime Kuma (`kuma.db`), with a review step.
 
-[Unreleased]: https://github.com/uptimy/agent/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/uptimy/agent/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/uptimy/agent/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/uptimy/agent/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/uptimy/agent/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/uptimy/agent/compare/v0.1.4...v0.1.5

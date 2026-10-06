@@ -3,8 +3,8 @@ name: uptimy-agent
 description: Self-hosted uptime monitoring with status pages, running inside your cluster.
 type: application
 # The chart is released with the agent: CI sets both versions from the tag.
-version: 0.1.7
-appVersion: "0.1.7"
+version: 0.1.8
+appVersion: "0.1.8"
 kubeVersion: ">=1.25.0-0"
 home: https://github.com/uptimy/agent
 icon: https://www.upti.my/brand/uptimy-app-icon.svg
@@ -26,5 +26,5 @@ annotations:
       url: https://www.upti.my
   artifacthub.io/images: |
     - name: agent
-      image: ghcr.io/uptimy/agent:0.1.7
+      image: ghcr.io/uptimy/agent:0.1.8
       platforms: [linux/amd64, linux/arm64]
