@@ -90,10 +90,13 @@ func newFixture(t *testing.T) *fixture {
 }
 
 // start (re)starts the dispatcher, as a restart would.
-func (f *fixture) start() {
+func (f *fixture) start() { f.startWith([]time.Duration{20 * time.Millisecond}) }
+
+// startWith (re)starts the dispatcher with its own retry backoff.
+func (f *fixture) startWith(backoff []time.Duration) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	f.d = New(f.st, notify.NewSender(log), events.NewHub(), log)
-	f.d.Backoff = []time.Duration{20 * time.Millisecond}
+	f.d.Backoff = backoff
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { f.d.Run(ctx, time.Second); close(done) }()
@@ -355,6 +358,10 @@ func TestRecoveryAfterAReminderGotThrough(t *testing.T) {
 // time it arrives: it's dropped, and the recovery goes out.
 func TestStatusChangeDropsWaitingReminders(t *testing.T) {
 	f := newFixture(t)
+	// A quick first retry, then a long wait: once the reminder has failed
+	// twice it's waiting, not in flight, when the monitor recovers.
+	f.stop()
+	f.startWith([]time.Duration{20 * time.Millisecond, 10 * time.Minute})
 	s := newSink(t)
 	n := f.channel("slack", s.URL)
 	down := f.alert(monitor.StatusDown, false, time.Hour)
@@ -362,10 +369,10 @@ func TestStatusChangeDropsWaitingReminders(t *testing.T) {
 
 	s.set(503)
 	f.reminder(down, n.ID)
-	eventually(t, "a failed reminder", func() bool {
+	eventually(t, "a reminder that failed twice", func() bool {
 		ds, _ := f.st.EventDeliveries(context.Background(), []int64{down.ID})
 		for _, d := range ds[down.ID] {
-			if d.AlertType == notify.AlertReminder && d.Attempts > 0 {
+			if d.AlertType == notify.AlertReminder && d.Attempts >= 2 {
 				return true
 			}
 		}
