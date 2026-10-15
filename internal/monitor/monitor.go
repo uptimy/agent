@@ -127,3 +127,10 @@ type Event struct {
 	Status    Status    `json:"status"`
 	Message   string    `json:"message"`
 }
+
+// Acknowledgement is someone taking on a monitor's outage: reminders stop
+// until its next status change.
+type Acknowledgement struct {
+	By   string    `json:"by"`
+	Time time.Time `json:"time"`
+}

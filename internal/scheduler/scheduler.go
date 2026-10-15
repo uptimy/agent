@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/checks"
+	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/monitor"
-	"github.com/uptimy/agent/internal/notify"
 	"github.com/uptimy/agent/internal/store"
 )
 
@@ -20,7 +20,7 @@ import (
 type Scheduler struct {
 	store   *store.Store
 	checker *checks.Checker
-	sender  *notify.Sender
+	alerts  *delivery.Dispatcher
 	hub     *events.Hub
 	log     *slog.Logger
 
@@ -30,6 +30,9 @@ type Scheduler struct {
 	tokens  map[string]int64 // heartbeat ping token → monitor ID, paused ones too
 	maint   maintenanceState
 	stats   statsTable
+
+	// reminderEvery is how often reminders are checked; tests shorten it.
+	reminderEvery time.Duration
 }
 
 // runner is the goroutine watching one monitor.
@@ -39,12 +42,14 @@ type runner interface {
 }
 
 // New creates a scheduler. Call Start to begin running monitors.
-func New(st *store.Store, checker *checks.Checker, sender *notify.Sender, hub *events.Hub, log *slog.Logger) *Scheduler {
+// Alerts go to the outbox, which alerts delivers.
+func New(st *store.Store, checker *checks.Checker, alerts *delivery.Dispatcher, hub *events.Hub, log *slog.Logger) *Scheduler {
 	return &Scheduler{
-		store: st, checker: checker, sender: sender, hub: hub, log: log,
+		store: st, checker: checker, alerts: alerts, hub: hub, log: log,
 		runners: map[int64]runner{},
 		tokens:  map[string]int64{},
-		maint:   maintenanceState{held: map[int64]bool{}},
+
+		reminderEvery: reminderCheckEvery,
 	}
 }
 
@@ -63,6 +68,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		s.Upsert(m)
 	}
 	go s.watchMaintenance()
+	go s.watchReminders()
 	return nil
 }
 
@@ -175,41 +181,31 @@ func (s *Scheduler) lastStatus(id int64) monitor.Status {
 	return e.Status
 }
 
-// recordTransition records a status change and, if alert is set, notifies
-// the monitor's channels, unless maintenance holds the alert back.
+// recordTransition records a status change and, if alert is set, the alert
+// to the monitor's channels, in one transaction: a change is never recorded
+// without its alert. A down alert during maintenance is held instead
+// (maintenance.go).
 func (s *Scheduler) recordTransition(m monitor.Monitor, status monitor.Status, message string, alert bool) {
 	ctx := context.WithoutCancel(s.ctx)
-	e, err := s.store.InsertEvent(ctx, monitor.Event{MonitorID: m.ID, Time: now(), Status: status, Message: message})
+	e := monitor.Event{MonitorID: m.ID, Time: now(), Status: status, Message: message}
+	var err error
+	if alert {
+		held := status == monitor.StatusDown && s.InMaintenance(m.ID)
+		e, err = s.store.InsertEventAlert(ctx, e, alertFor(m, status, message, e.Time), held, s.alerts.MaxAge)
+		if held {
+			s.log.Info("alert held for maintenance", "monitor", m.Name, "status", status)
+		}
+	} else {
+		e, err = s.store.InsertEvent(ctx, e)
+	}
 	if err != nil {
 		s.log.Error("saving event", "monitor", m.Name, "err", err)
 	}
 	s.hub.Publish(events.Message{Type: "status", MonitorID: m.ID, Data: e})
 	s.log.Info("monitor status changed", "monitor", m.Name, "status", status, "message", message)
-	if !alert {
-		return
+	if alert {
+		s.alerts.Wake()
 	}
-	if s.holdAlert(m, status) {
-		s.log.Info("alert held for maintenance", "monitor", m.Name, "status", status)
-		return
-	}
-	s.sendAlert(m, status, message, e.Time)
-}
-
-// sendAlert notifies the monitor's channels, in the background.
-func (s *Scheduler) sendAlert(m monitor.Monitor, status monitor.Status, message string, at time.Time) {
-	go func() {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), time.Minute)
-		defer cancel()
-		notifiers, err := s.store.NotifiersFor(ctx, m.ID)
-		if err != nil {
-			s.log.Error("loading notifiers", "err", err)
-			return
-		}
-		s.sender.SendAll(ctx, notifiers, notify.Alert{
-			MonitorID: m.ID, MonitorName: m.Name, Kind: string(m.Kind), Target: m.Describe(),
-			Status: string(status), Message: message, Time: at,
-		})
-	}()
 }
 
 // now is the scheduler's clock, at the database's millisecond precision so

@@ -1,10 +1,13 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/monitor"
+	"github.com/uptimy/agent/internal/notify"
+	"github.com/uptimy/agent/internal/scheduler"
 )
 
 // What healthchecks and heartbeats share: loading one by kind, pausing,
@@ -111,6 +114,27 @@ func (s *Server) pauseMonitor(kind monitor.Kind) http.HandlerFunc {
 	}
 }
 
+// acknowledgeMonitor records that the signed-in user is on a monitor's
+// outage: reminders stop, and chat channels hear who took it on.
+func (s *Server) acknowledgeMonitor(kind monitor.Kind) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		m, ok := s.loadMonitor(w, r, kind)
+		if !ok {
+			return
+		}
+		err := s.Scheduler.Acknowledge(m, currentUser(r).Username)
+		if errors.Is(err, scheduler.ErrNotDown) {
+			writeError(w, http.StatusConflict, "only an outage can be acknowledged, and "+m.Name+" isn't down")
+			return
+		}
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func (s *Server) deleteMonitor(kind monitor.Kind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		m, ok := s.loadMonitor(w, r, kind)
@@ -159,7 +183,27 @@ func (s *Server) monitorEvents(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, events)
+	ids := make([]int64, len(events))
+	for i, e := range events {
+		ids[i] = e.ID
+	}
+	deliveries, err := s.Store.EventDeliveries(r.Context(), ids)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	out := make([]eventWithAlerts, len(events))
+	for i, e := range events {
+		out[i] = eventWithAlerts{Event: e, Deliveries: deliveries[e.ID]}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// eventWithAlerts is a status change and how its alert went on each
+// channel; Deliveries is empty for changes that don't alert.
+type eventWithAlerts struct {
+	monitor.Event
+	Deliveries []notify.Delivery `json:"deliveries,omitempty"`
 }
 
 // activityItem is an event with the monitor it belongs to.

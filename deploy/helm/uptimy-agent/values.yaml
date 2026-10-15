@@ -40,6 +40,12 @@ heartbeats: []
 
 retentionDays: 30
 
+# Proxies whose X-Forwarded-For/-Proto headers are believed (sign-in rate
+# limits per client, Secure cookies behind TLS-terminating Ingresses):
+# "private" (loopback and private networks, where Ingress controllers
+# connect from), comma-separated addresses or CIDRs, or "none".
+trustedProxies: private
+
 # Create monitors for Services, Ingresses, HTTPRoutes and workloads labeled
 # upti.my/monitor: "true" (see the chart README). Nothing is monitored until
 # something is labeled.

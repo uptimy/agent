@@ -3,9 +3,11 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Config is the runtime configuration. Everything comes from env vars so the
@@ -26,6 +28,11 @@ type Config struct {
 	MonitorsYAML string
 
 	RetentionDays int
+
+	// TrustedProxies are the addresses whose X-Forwarded-For and
+	// X-Forwarded-Proto headers are believed: who the client is (for sign-in
+	// rate limits) and whether it used HTTPS (for Secure cookies).
+	TrustedProxies []netip.Prefix
 
 	// KubernetesDiscovery creates monitors for resources labeled
 	// upti.my/monitor=true when running in a cluster. On by default: nothing
@@ -87,7 +94,55 @@ func Load() (Config, error) {
 	if c.RetentionDays < 1 {
 		return c, fmt.Errorf("RETENTION_DAYS must be at least 1")
 	}
+	if c.TrustedProxies, err = ParseTrustedProxies(env("TRUSTED_PROXIES", "private")); err != nil {
+		return c, fmt.Errorf("TRUSTED_PROXIES: %w", err)
+	}
 	return c, nil
+}
+
+// PrivateNetworks are loopback and private addresses, where an Ingress
+// controller, Railway's edge or a reverse proxy on the same host connects
+// from. The default for TRUSTED_PROXIES.
+var PrivateNetworks = []netip.Prefix{
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"), // carrier-grade NAT, used inside some platforms
+	netip.MustParsePrefix("::1/128"),
+	netip.MustParsePrefix("fc00::/7"),
+}
+
+// ParseTrustedProxies reads TRUSTED_PROXIES: comma-separated addresses and
+// CIDR ranges, "private" for PrivateNetworks, or "none".
+func ParseTrustedProxies(v string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		switch {
+		case part == "":
+		case part == "none":
+			if strings.TrimSpace(v) != "none" {
+				return nil, fmt.Errorf("none can't be combined with addresses")
+			}
+			return nil, nil
+		case part == "private":
+			out = append(out, PrivateNetworks...)
+		case strings.Contains(part, "/"):
+			p, err := netip.ParsePrefix(part)
+			if err != nil {
+				return nil, fmt.Errorf("%q isn't an address range like 10.0.0.0/8", part)
+			}
+			out = append(out, p.Masked())
+		default:
+			a, err := netip.ParseAddr(part)
+			if err != nil {
+				return nil, fmt.Errorf("%q isn't an IP address", part)
+			}
+			out = append(out, netip.PrefixFrom(a, a.BitLen()))
+		}
+	}
+	return out, nil
 }
 
 // DatabasePath is where the SQLite database lives.

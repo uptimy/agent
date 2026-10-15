@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/checks"
+	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/notify"
@@ -22,10 +23,11 @@ import (
 )
 
 type fixture struct {
-	store  *store.Store
-	sched  *Scheduler
-	alerts chan notify.Alert
-	stop   func()
+	store   *store.Store
+	sched   *Scheduler
+	alerter *delivery.Dispatcher
+	alerts  chan notify.Alert
+	stop    func()
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -55,9 +57,15 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) start(t *testing.T) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f.sched = New(f.store, checks.New(nil), notify.NewSender(log), events.NewHub(), log)
+	hub := events.NewHub()
+	f.alerter = delivery.New(f.store, notify.NewSender(log), hub, log)
+	f.alerter.Backoff = []time.Duration{50 * time.Millisecond}
+	f.sched = New(f.store, checks.New(nil), f.alerter, hub, log)
+	f.sched.reminderEvery = 50 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
-	f.stop = func() { cancel(); f.sched.Wait() }
+	done := make(chan struct{})
+	go func() { f.alerter.Run(ctx, time.Second); close(done) }()
+	f.stop = func() { cancel(); f.sched.Wait(); <-done }
 	t.Cleanup(f.stop)
 	if err := f.sched.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -294,4 +302,69 @@ func TestHeartbeatReport(t *testing.T) {
 	if run, _ := f.store.LastRun(context.Background(), fast.ID); run.ID != missed.ID || !run.OnTime || run.Outcome != monitor.OutcomeSuccess {
 		t.Fatalf("the missed run should be on time after all: %+v", run)
 	}
+}
+
+func TestRecoveryThreshold(t *testing.T) {
+	var healthy atomic.Bool
+	healthy.Store(true)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !healthy.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	defer target.Close()
+
+	f := newFixture(t)
+	m := monitor.Monitor{Kind: monitor.KindHealthcheck, Name: "web", Check: &monitor.Check{
+		Type: monitor.TypeHTTP, Target: target.URL, IntervalSeconds: 3600, FailureThreshold: 1, RecoveryThreshold: 3,
+	}}
+	if err := m.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	m = f.create(t, m)
+	status := func(want monitor.Status) func() bool {
+		return func() bool { return f.sched.Status(m) == want }
+	}
+	// From pending, the first good check is enough.
+	eventually(t, "up", status(monitor.StatusUp))
+
+	check := func(ok bool) {
+		t.Helper()
+		healthy.Store(ok)
+		before := len(results(t, f, m.ID))
+		f.sched.CheckNow(m.ID)
+		eventually(t, "the check", func() bool { return len(results(t, f, m.ID)) > before })
+	}
+	check(false)
+	eventually(t, "down", status(monitor.StatusDown))
+	if a := f.alert(t); a.Status != "down" {
+		t.Fatalf("alert %+v", a)
+	}
+
+	// Two good checks, a bad one (which restarts the count), then three good.
+	for i, ok := range []bool{true, true, false, true, true} {
+		check(ok)
+		if got := f.sched.Status(m); got != monitor.StatusDown {
+			t.Fatalf("check %d: %s before 3 good checks in a row", i+1, got)
+		}
+	}
+	check(true)
+	eventually(t, "up again", status(monitor.StatusUp))
+	if a := f.alert(t); a.Status != "up" {
+		t.Fatalf("alert %+v", a)
+	}
+	select {
+	case a := <-f.alerts:
+		t.Fatalf("flapping alerted: %+v", a)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func results(t *testing.T, f *fixture, id int64) []monitor.Result {
+	t.Helper()
+	rs, err := f.store.RecentResults(context.Background(), id, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
 }

@@ -27,8 +27,9 @@ const (
 
 func init() {
 	Register(Channel{
-		Type:  "email",
-		Label: "Email",
+		Type:      "email",
+		Reminders: true,
+		Label:     "Email",
 		Help: "Send alerts through any SMTP server: your mail provider, or a service like Amazon SES, " +
 			"Postmark or Resend. Use an app password where your provider supports them.",
 		Order: 5,

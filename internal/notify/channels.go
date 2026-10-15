@@ -18,6 +18,10 @@ type Channel struct {
 	Help   string         `json:"help"`
 	Order  int            `json:"order"`
 	Fields []schema.Field `json:"fields"`
+	// Reminders is set for channels people read, which get reminders while
+	// a monitor stays down and a note when someone acknowledges it. Paging
+	// and incident tools (PagerDuty, Uptimy) track outages themselves.
+	Reminders bool `json:"reminders"`
 
 	// Validate checks the settings, and may fill defaults.
 	Validate func(c *Config) error                                         `json:"-"`

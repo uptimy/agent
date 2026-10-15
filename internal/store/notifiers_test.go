@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/notify"
@@ -83,5 +84,34 @@ func TestAlertRouting(t *testing.T) {
 
 	if _, err := st.CreateNotifier(ctx, notify.Notifier{Name: "x", Type: "webhook", MonitorIDs: []int64{999}}); !errors.Is(err, ErrUnknownMonitor) {
 		t.Fatalf("unknown monitor: %v", err)
+	}
+}
+
+func TestPruneKeepsCurrentStatus(t *testing.T) {
+	ctx := context.Background()
+	st := open(t)
+	m := monitor.Monitor{Kind: monitor.KindHealthcheck, Name: "web", Check: &monitor.Check{Type: monitor.TypeTCP, Target: "x:1"}}
+	if err := m.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.CreateMonitor(ctx, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().AddDate(0, 0, -60).UTC().Truncate(time.Millisecond)
+	for i, s := range []monitor.Status{monitor.StatusUp, monitor.StatusDown} {
+		if _, err := st.InsertEvent(ctx, monitor.Event{MonitorID: m.ID, Time: old.Add(time.Duration(i) * time.Minute), Status: s}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.Prune(ctx, time.Now().AddDate(0, 0, -30)); err != nil {
+		t.Fatal(err)
+	}
+	events, err := st.ListEvents(ctx, m.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Status != monitor.StatusDown {
+		t.Fatalf("after pruning: %+v; the newest event is the monitor's status and must stay", events)
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/uptimy/agent/internal/checks"
 	"github.com/uptimy/agent/internal/config"
 	"github.com/uptimy/agent/internal/connect"
+	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/notify"
@@ -102,15 +103,18 @@ func newTestServerWithConfig(t *testing.T, cfg config.Config) (*client, *store.S
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	hub := events.NewHub()
 	sender := notify.NewSender(log)
-	sched := scheduler.New(st, checks.New(nil), sender, hub, log)
+	alerts := delivery.New(st, sender, hub, log)
+	sched := scheduler.New(st, checks.New(nil), alerts, hub, log)
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(func() { cancel(); sched.Wait() })
+	alertsDone := make(chan struct{})
+	go func() { alerts.Run(ctx, time.Second); close(alertsDone) }()
+	t.Cleanup(func() { cancel(); sched.Wait(); <-alertsDone })
 	if err := sched.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	srv := &Server{
 		Config: cfg, Version: "test",
-		Store: st, Scheduler: sched, Sender: sender, Hub: hub, Log: log,
+		Store: st, Scheduler: sched, Sender: sender, Alerts: alerts, Hub: hub, Log: log,
 		Watchdog: connect.NewWatchdog("", false, time.Minute, "test", sched.Counts, log),
 	}
 	ts := httptest.NewServer(srv.Handler(http.NotFoundHandler()))

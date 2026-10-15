@@ -14,7 +14,7 @@ import (
 // heartbeats; reads join them back together.
 const selectMonitors = `SELECT m.id, m.kind, m.name, m.paused, m.source, m.source_ref,
 		m.public, m.status_label, m.status_order, m.status_section, m.created_at, m.updated_at,
-		h.type, h.target, h.interval_seconds, h.timeout_seconds, h.failure_threshold, h.config,
+		h.type, h.target, h.interval_seconds, h.timeout_seconds, h.failure_threshold, h.recovery_threshold, h.config,
 		b.token, b.every_seconds, b.cron, b.timezone, b.grace_seconds
 	FROM monitors m
 	LEFT JOIN healthchecks h ON h.monitor_id = m.id
@@ -27,15 +27,15 @@ func scanMonitor(row scanner) (monitor.Monitor, error) {
 		m                monitor.Monitor
 		created, updated int64
 		// healthchecks
-		hType, hTarget, hConfig          sql.NullString
-		hInterval, hTimeout, hThresholds sql.NullInt64
+		hType, hTarget, hConfig                     sql.NullString
+		hInterval, hTimeout, hThresholds, hRecovery sql.NullInt64
 		// heartbeats
 		bToken, bCron, bZone sql.NullString
 		bEvery, bGrace       sql.NullInt64
 	)
 	err := row.Scan(&m.ID, &m.Kind, &m.Name, &m.Paused, &m.Source, &m.SourceRef,
 		&m.Public, &m.StatusLabel, &m.StatusOrder, &m.StatusSection, &created, &updated,
-		&hType, &hTarget, &hInterval, &hTimeout, &hThresholds, &hConfig,
+		&hType, &hTarget, &hInterval, &hTimeout, &hThresholds, &hRecovery, &hConfig,
 		&bToken, &bEvery, &bCron, &bZone, &bGrace)
 	if err != nil {
 		return m, err
@@ -45,7 +45,7 @@ func scanMonitor(row scanner) (monitor.Monitor, error) {
 	case monitor.KindHealthcheck:
 		c := &monitor.Check{
 			Type: monitor.Type(hType.String), Target: hTarget.String,
-			IntervalSeconds: int(hInterval.Int64), TimeoutSeconds: int(hTimeout.Int64), FailureThreshold: int(hThresholds.Int64),
+			IntervalSeconds: int(hInterval.Int64), TimeoutSeconds: int(hTimeout.Int64), FailureThreshold: int(hThresholds.Int64), RecoveryThreshold: int(hRecovery.Int64),
 		}
 		if err := json.Unmarshal([]byte(hConfig.String), &c.Config); err != nil {
 			return m, err
@@ -137,12 +137,12 @@ func saveSettings(ctx context.Context, tx *sql.Tx, m monitor.Monitor) error {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO healthchecks
-			(monitor_id, type, target, interval_seconds, timeout_seconds, failure_threshold, config)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
+			(monitor_id, type, target, interval_seconds, timeout_seconds, failure_threshold, recovery_threshold, config)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (monitor_id) DO UPDATE SET type = excluded.type, target = excluded.target,
 				interval_seconds = excluded.interval_seconds, timeout_seconds = excluded.timeout_seconds,
-				failure_threshold = excluded.failure_threshold, config = excluded.config`,
-			m.ID, c.Type, c.Target, c.IntervalSeconds, c.TimeoutSeconds, c.FailureThreshold, string(cfg))
+				failure_threshold = excluded.failure_threshold, recovery_threshold = excluded.recovery_threshold, config = excluded.config`,
+			m.ID, c.Type, c.Target, c.IntervalSeconds, c.TimeoutSeconds, c.FailureThreshold, c.RecoveryThreshold, string(cfg))
 		return err
 	case monitor.KindHeartbeat:
 		h := m.Heartbeat

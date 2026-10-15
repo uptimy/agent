@@ -18,6 +18,7 @@ import (
 	"github.com/uptimy/agent/internal/checks"
 	"github.com/uptimy/agent/internal/config"
 	"github.com/uptimy/agent/internal/connect"
+	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/discovery"
 	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/filesync"
@@ -42,6 +43,9 @@ func main() {
 		case "healthcheck":
 			// For Docker HEALTHCHECK: the distroless image has no curl.
 			os.Exit(healthcheck())
+		case "validate":
+			// Check a monitors file in CI, without starting the agent.
+			os.Exit(validate(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		case "reset-2fa":
 			// For a user, the only admin included, who lost both their
 			// phone and their recovery codes.
@@ -87,7 +91,15 @@ func run(log *slog.Logger) error {
 	}
 	hub := events.NewHub()
 	sender := notify.NewSender(log)
-	sched := scheduler.New(st, checks.New(kc), sender, hub, log)
+	alerts := delivery.New(st, sender, hub, log)
+	// Alerts outlive the scheduler (stopped before returning), so the last
+	// status changes still go out; whatever doesn't make it stays in the
+	// outbox for the next start.
+	alertsCtx, stopAlerts := context.WithCancel(context.WithoutCancel(ctx))
+	alertsDone := make(chan struct{})
+	go func() { alerts.Run(alertsCtx, 5*time.Second); close(alertsDone) }()
+	defer func() { stopAlerts(); <-alertsDone }()
+	sched := scheduler.New(st, checks.New(kc), alerts, hub, log)
 	if err := sched.Start(ctx); err != nil {
 		return fmt.Errorf("start scheduler: %w", err)
 	}
@@ -122,7 +134,7 @@ func run(log *slog.Logger) error {
 
 	srv := &api.Server{
 		Config: cfg, Version: version, Store: st, Scheduler: sched,
-		Sender: sender, Hub: hub, Log: log, Watchdog: watchdog, KubeAvailable: kc != nil, Discovery: disc,
+		Sender: sender, Alerts: alerts, Hub: hub, Log: log, Watchdog: watchdog, KubeAvailable: kc != nil, Discovery: disc,
 	}
 	srv.RestorePaused(ctx)
 	go watchdog.Run(ctx)

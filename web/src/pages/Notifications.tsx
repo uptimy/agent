@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Field, Input, Select, Switch } from "@/components/ui/input";
 import { ErrorNote, PageHeader } from "@/components/Layout";
 import { useCanEdit } from "@/components/AuthGate";
+import { RetryButton } from "@/components/Deliveries";
+import { cn, formatInterval, timeAgo } from "@/lib/utils";
 
 const blank: NotifierInput = {
   name: "",
@@ -21,7 +23,23 @@ const blank: NotifierInput = {
   config: {},
   all_monitors: true,
   monitor_ids: [],
+  repeat_seconds: 0,
 };
+
+/** "Remind while down" choices, in seconds; 0 is off. */
+const repeatChoices = [
+  { seconds: 0, label: "Don't remind" },
+  { seconds: 15 * 60, label: "Every 15 minutes" },
+  { seconds: 30 * 60, label: "Every 30 minutes" },
+  { seconds: 60 * 60, label: "Every hour" },
+  { seconds: 4 * 60 * 60, label: "Every 4 hours" },
+  { seconds: 24 * 60 * 60, label: "Once a day" },
+];
+
+function repeatLabel(seconds: number) {
+  const choice = repeatChoices.find((c) => c.seconds === seconds);
+  return choice ? choice.label.toLowerCase() : `every ${formatInterval(seconds)}`;
+}
 
 export function Notifications() {
   const notifiers = useQuery({ queryKey: ["notifiers"], queryFn: api.notifiers });
@@ -34,7 +52,7 @@ export function Notifications() {
       <PageHeader
         title="Notifications"
         icon={Bell}
-        description="Channels are alerted when a monitor goes down or recovers: for every monitor, or only the ones you choose."
+        description="Channels are alerted when a monitor goes down or recovers: for every monitor, or only the ones you choose. An alert a channel can't take is retried for up to an hour."
         actions={
           canEdit &&
           editing == null && (
@@ -86,7 +104,7 @@ function NotifierRow({ n, onEdit }: { n: Notifier; onEdit: () => void }) {
   return (
     <Card className="p-5">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-48 flex-1">
           <div className="flex items-center gap-2">
             <span className="font-medium">{n.name}</span>
             <Badge>{channelLabel(n.type)}</Badge>
@@ -98,10 +116,12 @@ function NotifierRow({ n, onEdit }: { n: Notifier; onEdit: () => void }) {
               : n.monitor_ids.length === 0
                 ? "No monitors yet: edit it to choose some"
                 : `${n.monitor_ids.length} monitor${n.monitor_ids.length === 1 ? "" : "s"}`}
+            {n.repeat_seconds > 0 && <> · reminds {repeatLabel(n.repeat_seconds)} while down</>}
           </div>
+          <ChannelHealthLine n={n} />
         </div>
         {canEdit && (
-          <>
+          <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => test.mutate()} disabled={test.isPending}>
               <Send /> {test.isPending ? "Sending…" : "Send test"}
             </Button>
@@ -128,7 +148,7 @@ function NotifierRow({ n, onEdit }: { n: Notifier; onEdit: () => void }) {
             >
               <Trash2 />
             </Button>
-          </>
+          </div>
         )}
       </div>
       {test.error && (
@@ -151,6 +171,7 @@ function NotifierForm({ initial, onDone }: { initial: Notifier | null; onDone: (
           config: initial.config,
           all_monitors: initial.all_monitors,
           monitor_ids: initial.monitor_ids,
+          repeat_seconds: initial.repeat_seconds,
         }
       : blank,
   );
@@ -217,6 +238,30 @@ function NotifierForm({ initial, onDone }: { initial: Notifier | null; onDone: (
             allLabel="Alert for every monitor, including new ones"
             someLabel="Only for the monitors I choose"
           />
+          {channel?.reminders && (
+            <Field
+              label="Remind while down"
+              htmlFor="n-repeat"
+              hint="Until someone acknowledges the outage or it recovers, so a muted channel or a missed message doesn't leave it unnoticed."
+            >
+              <Select
+                id="n-repeat"
+                value={form.repeat_seconds}
+                onChange={(e) => setForm({ ...form, repeat_seconds: Number(e.target.value) })}
+              >
+                {[
+                  ...repeatChoices,
+                  ...(repeatChoices.some((c) => c.seconds === form.repeat_seconds)
+                    ? []
+                    : [{ seconds: form.repeat_seconds, label: repeatLabel(form.repeat_seconds) }]),
+                ].map((c) => (
+                  <option key={c.seconds} value={c.seconds}>
+                    {c.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
           <Switch
             id="n-enabled"
             checked={form.enabled}
@@ -235,6 +280,42 @@ function NotifierForm({ initial, onDone }: { initial: Notifier | null; onDone: (
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+/** How the channel's recent alerts went: the last one, failures and anything waiting. */
+function ChannelHealthLine({ n }: { n: Notifier }) {
+  const { last, failed, pending } = n.health;
+  const lastFailed = last != null && (last.state === "failed" || last.state === "expired");
+  const parts: React.ReactNode[] = [];
+  if (last?.done_at) {
+    parts.push(
+      <span key="last" className={cn(lastFailed && "text-down")}>
+        {lastFailed ? "Last alert not delivered" : "Last alert sent"} {timeAgo(last.done_at)}
+        {lastFailed && last.detail && <>: {last.detail}</>}
+        {lastFailed && <RetryButton d={last} />}
+      </span>,
+    );
+  }
+  if (failed > (lastFailed ? 1 : 0)) {
+    parts.push(
+      <span key="failed" className="text-down">
+        {failed} not delivered in the last 24 hours
+      </span>,
+    );
+  }
+  if (pending > 0) {
+    parts.push(
+      <span key="pending" className="text-paused">
+        {pending} waiting to be sent
+      </span>,
+    );
+  }
+  if (parts.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+      {parts.flatMap((p, i) => (i === 0 ? [p] : [<span key={`sep${i}`}>·</span>, p]))}
+    </div>
   );
 }
 

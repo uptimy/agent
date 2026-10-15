@@ -16,9 +16,10 @@ type healthcheckRunner struct {
 	done   chan struct{}
 	now    chan struct{} // "check now", from the UI
 
-	mu       sync.Mutex
-	current  monitor.Status
-	failures int // consecutive failed probes
+	mu        sync.Mutex
+	current   monitor.Status
+	failures  int // consecutive failed probes
+	successes int // consecutive good probes
 }
 
 func (r *healthcheckRunner) stop() {
@@ -76,7 +77,8 @@ func (s *Scheduler) CheckNow(id int64) bool {
 }
 
 // probe runs one check, records the result and updates the status: down
-// after FailureThreshold consecutive failures, up on the next success.
+// after FailureThreshold consecutive failures, up again after
+// RecoveryThreshold consecutive successes.
 func (s *Scheduler) probe(ctx context.Context, r *healthcheckRunner, m monitor.Monitor) {
 	c := *m.Check
 	start := time.Now()
@@ -106,8 +108,14 @@ func (s *Scheduler) probe(ctx context.Context, r *healthcheckRunner, m monitor.M
 	next := prev
 	if res.OK {
 		r.failures = 0
-		next = monitor.StatusUp
+		r.successes++
+		// Once down, it takes RecoveryThreshold good probes in a row to be
+		// up again; from pending, the first good one will do.
+		if prev != monitor.StatusDown || r.successes >= c.RecoveryThreshold {
+			next = monitor.StatusUp
+		}
 	} else {
+		r.successes = 0
 		r.failures++
 		if r.failures >= c.FailureThreshold {
 			next = monitor.StatusDown

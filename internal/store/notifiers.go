@@ -11,7 +11,7 @@ import (
 	"github.com/uptimy/agent/internal/notify"
 )
 
-const notifierColumns = "id, name, type, enabled, config, created_at, all_monitors"
+const notifierColumns = "id, name, type, enabled, config, created_at, all_monitors, repeat_seconds"
 
 func scanNotifier(row scanner) (notify.Notifier, error) {
 	var (
@@ -19,7 +19,7 @@ func scanNotifier(row scanner) (notify.Notifier, error) {
 		cfg     string
 		created int64
 	)
-	if err := row.Scan(&n.ID, &n.Name, &n.Type, &n.Enabled, &cfg, &created, &n.AllMonitors); err != nil {
+	if err := row.Scan(&n.ID, &n.Name, &n.Type, &n.Enabled, &cfg, &created, &n.AllMonitors, &n.RepeatSeconds); err != nil {
 		return n, err
 	}
 	n.CreatedAt = fromMillis(created)
@@ -101,8 +101,8 @@ func (s *Store) CreateNotifier(ctx context.Context, n notify.Notifier) (notify.N
 	}
 	n.CreatedAt = time.Now().UTC().Truncate(time.Millisecond)
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, "INSERT INTO notifiers (name, type, enabled, config, created_at, all_monitors) VALUES (?, ?, ?, ?, ?, ?)",
-			n.Name, n.Type, n.Enabled, string(cfg), n.CreatedAt.UnixMilli(), n.AllMonitors)
+		res, err := tx.ExecContext(ctx, "INSERT INTO notifiers (name, type, enabled, config, created_at, all_monitors, repeat_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			n.Name, n.Type, n.Enabled, string(cfg), n.CreatedAt.UnixMilli(), n.AllMonitors, n.RepeatSeconds)
 		if err != nil {
 			return err
 		}
@@ -124,8 +124,8 @@ func (s *Store) UpdateNotifier(ctx context.Context, n notify.Notifier) (notify.N
 		return n, err
 	}
 	err = s.inTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, "UPDATE notifiers SET name = ?, type = ?, enabled = ?, config = ?, all_monitors = ? WHERE id = ?",
-			n.Name, n.Type, n.Enabled, string(cfg), n.AllMonitors, n.ID)
+		res, err := tx.ExecContext(ctx, "UPDATE notifiers SET name = ?, type = ?, enabled = ?, config = ?, all_monitors = ?, repeat_seconds = ? WHERE id = ?",
+			n.Name, n.Type, n.Enabled, string(cfg), n.AllMonitors, n.RepeatSeconds, n.ID)
 		if err != nil {
 			return err
 		}

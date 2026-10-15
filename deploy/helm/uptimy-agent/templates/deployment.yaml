@@ -45,6 +45,8 @@ spec:
               value: {{ .Values.agentName | default .Release.Name | quote }}
             - name: RETENTION_DAYS
               value: {{ .Values.retentionDays | quote }}
+            - name: TRUSTED_PROXIES
+              value: {{ .Values.trustedProxies | quote }}
             - name: KUBERNETES_DISCOVERY
               value: {{ .Values.discovery.enabled | quote }}
             {{- if or .Values.healthchecks .Values.heartbeats }}

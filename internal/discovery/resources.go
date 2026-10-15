@@ -38,6 +38,8 @@ type options struct {
 	name, path, port, typ, scheme string
 	interval, grace               int // seconds
 	expectedStatus, keyword       string
+	failureThreshold              int
+	recoveryThreshold             int
 }
 
 func parseOptions(o object) (options, error) {
@@ -53,6 +55,15 @@ func parseOptions(o object) (options, error) {
 				return opts, fmt.Errorf("%s/%s: %w", prefix, key, err)
 			}
 			*dst = int(d.Seconds())
+		}
+	}
+	for key, dst := range map[string]*int{"failure-threshold": &opts.failureThreshold, "recovery-threshold": &opts.recoveryThreshold} {
+		if v := a(key); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > 10 {
+				return opts, fmt.Errorf("%s/%s must be a number from 1 to 10", prefix, key)
+			}
+			*dst = n
 		}
 	}
 	if opts.path != "" && !strings.HasPrefix(opts.path, "/") {
@@ -73,7 +84,9 @@ func (opts options) httpCheck(target string) *monitor.Check {
 	}
 }
 
-func healthcheck(name string, c *monitor.Check) monitor.Monitor {
+// healthcheck is a discovered healthcheck, with the annotations' thresholds.
+func (opts options) healthcheck(name string, c *monitor.Check) monitor.Monitor {
+	c.FailureThreshold, c.RecoveryThreshold = opts.failureThreshold, opts.recoveryThreshold
 	return monitor.Monitor{Kind: monitor.KindHealthcheck, Name: name, Check: c}
 }
 
@@ -109,7 +122,7 @@ func (d *Discoverer) fromService(ctx context.Context, o object) ([]monitor.Monit
 	typ := opts.typ
 	if typ == "kubernetes" {
 		target := o.Metadata.Namespace + "/service/" + o.Metadata.Name
-		return []monitor.Monitor{healthcheck(name, &monitor.Check{Type: monitor.TypeKubernetes, Target: target, IntervalSeconds: opts.interval})}, nil
+		return []monitor.Monitor{opts.healthcheck(name, &monitor.Check{Type: monitor.TypeKubernetes, Target: target, IntervalSeconds: opts.interval})}, nil
 	}
 
 	if len(spec.Ports) == 0 {
@@ -141,7 +154,7 @@ func (d *Discoverer) fromService(ctx context.Context, o object) ([]monitor.Monit
 	}
 	switch typ {
 	case "tcp":
-		return []monitor.Monitor{healthcheck(name, &monitor.Check{Type: monitor.TypeTCP, Target: host, IntervalSeconds: opts.interval})}, nil
+		return []monitor.Monitor{opts.healthcheck(name, &monitor.Check{Type: monitor.TypeTCP, Target: host, IntervalSeconds: opts.interval})}, nil
 	case "http":
 		scheme := cmp.Or(opts.scheme, rp.scheme)
 		if scheme == "" {
@@ -151,7 +164,7 @@ func (d *Discoverer) fromService(ctx context.Context, o object) ([]monitor.Monit
 			}
 		}
 		path := cmp.Or(opts.path, rp.path, "/")
-		return []monitor.Monitor{healthcheck(name, opts.httpCheck(scheme+"://"+host+path))}, nil
+		return []monitor.Monitor{opts.healthcheck(name, opts.httpCheck(scheme+"://"+host+path))}, nil
 	}
 	return nil, fmt.Errorf("%s/type must be http, tcp or kubernetes", prefix)
 }
@@ -260,7 +273,7 @@ func fromHosts(o object, hosts []string, scheme func(host string) string) ([]mon
 				name += " (" + h + ")"
 			}
 		}
-		m := healthcheck(name, opts.httpCheck(s+"://"+h+path))
+		m := opts.healthcheck(name, opts.httpCheck(s+"://"+h+path))
 		m.SourceRef = "#" + h // one monitor per hostname
 		out = append(out, m)
 	}
@@ -282,7 +295,7 @@ func fromWorkload(kind string) func(*Discoverer, context.Context, object) ([]mon
 			name = fmt.Sprintf("%s/%s (%s)", o.Metadata.Namespace, o.Metadata.Name, kind)
 		}
 		target := o.Metadata.Namespace + "/" + kind + "/" + o.Metadata.Name
-		return []monitor.Monitor{healthcheck(name, &monitor.Check{Type: monitor.TypeKubernetes, Target: target, IntervalSeconds: opts.interval})}, nil
+		return []monitor.Monitor{opts.healthcheck(name, &monitor.Check{Type: monitor.TypeKubernetes, Target: target, IntervalSeconds: opts.interval})}, nil
 	}
 }
 

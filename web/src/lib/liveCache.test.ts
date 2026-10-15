@@ -17,6 +17,7 @@ function summary(over: Partial<HealthcheckSummary> = {}): HealthcheckSummary {
     id: 1,
     kind: "healthcheck",
     in_maintenance: false,
+    acknowledged: null,
     name: "api",
     check: {
       type: "http",
@@ -24,6 +25,7 @@ function summary(over: Partial<HealthcheckSummary> = {}): HealthcheckSummary {
       interval_seconds: 30,
       timeout_seconds: 10,
       failure_threshold: 2,
+      recovery_threshold: 1,
       config: {},
     },
     target: "https://x.test",

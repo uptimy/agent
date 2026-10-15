@@ -40,6 +40,21 @@ func isAgentEnv(name string) bool {
 		strings.HasPrefix(name, "RETENTION_")
 }
 
+// EnvRefs returns the environment variables a database target references,
+// in order.
+func (c Check) EnvRefs() []string {
+	if !c.Type.IsDatabase() {
+		return nil
+	}
+	var names []string
+	for _, ref := range envRef.FindAllStringSubmatch(c.Target, -1) {
+		if !slices.Contains(names, ref[1]) {
+			names = append(names, ref[1])
+		}
+	}
+	return names
+}
+
 // ResolvedTarget returns the target with ${VAR} references replaced by
 // environment variables, so connection strings (or just their passwords) can
 // come from a Kubernetes Secret or a Railway reference variable instead of

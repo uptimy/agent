@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -33,13 +34,14 @@ type common struct {
 
 // HealthcheckEntry is a healthcheck in YAML.
 type HealthcheckEntry struct {
-	common           `yaml:",inline"`
-	Type             monitor.Type   `yaml:"type"`
-	Target           string         `yaml:"target"`
-	Interval         string         `yaml:"interval"` // e.g. 30s
-	Timeout          string         `yaml:"timeout"`
-	FailureThreshold int            `yaml:"failure_threshold"`
-	Config           monitor.Config `yaml:"config"`
+	common            `yaml:",inline"`
+	Type              monitor.Type   `yaml:"type"`
+	Target            string         `yaml:"target"`
+	Interval          string         `yaml:"interval"` // e.g. 30s
+	Timeout           string         `yaml:"timeout"`
+	FailureThreshold  int            `yaml:"failure_threshold"`
+	RecoveryThreshold int            `yaml:"recovery_threshold"`
+	Config            monitor.Config `yaml:"config"`
 }
 
 // HeartbeatEntry is a heartbeat in YAML: every or cron sets the schedule.
@@ -59,35 +61,55 @@ type Desired = managed.Desired
 
 // Parse decodes and validates YAML.
 func Parse(data []byte) ([]Desired, error) {
+	out, problems := Check(data)
+	if len(problems) > 0 {
+		return nil, problems[0]
+	}
+	return out, nil
+}
+
+// Check decodes and validates YAML like Parse, but reports every problem,
+// for `uptimy-agent validate`. The monitors are those without problems.
+func Check(data []byte) ([]Desired, []error) {
 	var f File
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true) // a misspelled setting is an error, not silently ignored
 	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
+		return nil, []error{err}
 	}
+	var problems []error
 	out := make([]Desired, 0, len(f.Healthchecks)+len(f.Heartbeats))
 	for i, e := range f.Healthchecks {
 		m, err := e.monitor()
 		if err != nil {
-			return nil, fmt.Errorf("healthcheck %d (%s): %w", i+1, e.Name, err)
+			problems = append(problems, fmt.Errorf("healthcheck %d (%s): %w", i+1, e.Name, err))
+			continue
 		}
 		out = append(out, Desired{Monitor: m})
 	}
 	for i, e := range f.Heartbeats {
 		m, err := e.monitor()
 		if err != nil {
-			return nil, fmt.Errorf("heartbeat %d (%s): %w", i+1, e.Name, err)
+			problems = append(problems, fmt.Errorf("heartbeat %d (%s): %w", i+1, e.Name, err))
+			continue
 		}
 		out = append(out, Desired{Monitor: m, GeneratedToken: e.Token == ""})
 	}
 	seen := map[string]bool{}
-	for _, d := range out {
-		if seen[d.Name] {
-			return nil, fmt.Errorf("two monitors are named %q; names must be unique", d.Name)
-		}
-		seen[d.Name] = true
+	names := make([]string, 0, len(f.Healthchecks)+len(f.Heartbeats))
+	for _, e := range f.Healthchecks {
+		names = append(names, strings.TrimSpace(e.Name))
 	}
-	return out, nil
+	for _, e := range f.Heartbeats {
+		names = append(names, strings.TrimSpace(e.Name))
+	}
+	for _, name := range names {
+		if seen[name] && name != "" {
+			problems = append(problems, fmt.Errorf("two monitors are named %q; names must be unique", name))
+		}
+		seen[name] = true
+	}
+	return out, problems
 }
 
 func (c common) monitor(kind monitor.Kind) monitor.Monitor {
@@ -96,7 +118,7 @@ func (c common) monitor(kind monitor.Kind) monitor.Monitor {
 
 func (e HealthcheckEntry) monitor() (monitor.Monitor, error) {
 	m := e.common.monitor(monitor.KindHealthcheck)
-	c := monitor.Check{Type: e.Type, Target: e.Target, FailureThreshold: e.FailureThreshold, Config: e.Config}
+	c := monitor.Check{Type: e.Type, Target: e.Target, FailureThreshold: e.FailureThreshold, RecoveryThreshold: e.RecoveryThreshold, Config: e.Config}
 	var err error
 	if c.IntervalSeconds, err = seconds(e.Interval); err != nil {
 		return m, fmt.Errorf("interval: %w", err)

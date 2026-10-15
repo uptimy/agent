@@ -13,6 +13,7 @@ import (
 
 	"github.com/uptimy/agent/internal/config"
 	"github.com/uptimy/agent/internal/connect"
+	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/discovery"
 	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/monitor"
@@ -28,6 +29,7 @@ type Server struct {
 	Store         *store.Store
 	Scheduler     *scheduler.Scheduler
 	Sender        *notify.Sender
+	Alerts        *delivery.Dispatcher
 	Hub           *events.Hub
 	Log           *slog.Logger
 	Watchdog      *connect.Watchdog
@@ -88,6 +90,7 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	auth("PUT /api/healthchecks/{id}", s.updateHealthcheck)
 	auth("DELETE /api/healthchecks/{id}", s.deleteMonitor(monitor.KindHealthcheck))
 	auth("POST /api/healthchecks/{id}/pause", s.pauseMonitor(monitor.KindHealthcheck))
+	auth("POST /api/healthchecks/{id}/acknowledge", s.acknowledgeMonitor(monitor.KindHealthcheck))
 	auth("POST /api/healthchecks/{id}/check", s.checkNow)
 	auth("GET /api/healthchecks/{id}/results", s.healthcheckResults)
 
@@ -98,6 +101,7 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	auth("PUT /api/heartbeats/{id}", s.updateHeartbeat)
 	auth("DELETE /api/heartbeats/{id}", s.deleteMonitor(monitor.KindHeartbeat))
 	auth("POST /api/heartbeats/{id}/pause", s.pauseMonitor(monitor.KindHeartbeat))
+	auth("POST /api/heartbeats/{id}/acknowledge", s.acknowledgeMonitor(monitor.KindHeartbeat))
 	auth("POST /api/heartbeats/{id}/token", s.rotateToken)
 	auth("GET /api/heartbeats/{id}/runs", s.heartbeatRuns)
 
@@ -116,6 +120,7 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	auth("DELETE /api/incidents/{id}/updates/{update}", s.deleteIncidentUpdate)
 
 	auth("GET /api/monitors/{id}/events", s.monitorEvents)
+	auth("POST /api/alerts/{alert}/deliveries/{notifier}/retry", s.retryDelivery)
 	auth("GET /api/activity", s.activity)
 
 	auth("GET /api/uptimy/heartbeat", s.heartbeatStatus)

@@ -20,6 +20,8 @@ export interface Check {
   interval_seconds: number;
   timeout_seconds: number;
   failure_threshold: number;
+  /** Consecutive successes before a down healthcheck is up again. */
+  recovery_threshold: number;
   config: Record<string, ConfigValue>;
 }
 
@@ -60,6 +62,37 @@ export interface MonitorEvent {
   time: string;
   status: Status;
   message: string;
+  /** How the change's alert went on each channel; absent when it didn't alert. */
+  deliveries?: Delivery[];
+}
+
+/** One alert on one channel (internal/notify.Delivery). */
+export type DeliveryState = "pending" | "held" | "sent" | "failed" | "expired" | "suppressed";
+
+export interface Delivery {
+  alert_id: number;
+  /** Absent for a status change. */
+  alert_type?: "reminder" | "acknowledged";
+  notifier_id: number;
+  notifier_name: string;
+  notifier_type: string;
+  state: DeliveryState;
+  attempts: number;
+  /** When a pending delivery is tried next. */
+  next_attempt_at?: string;
+  /** The last error, or why it wasn't sent. */
+  detail?: string;
+  done_at: string | null;
+}
+
+/** A channel's recent deliveries (store.ChannelHealth). */
+export interface ChannelHealth {
+  /** The newest delivery that was sent, failed or expired. */
+  last: Delivery | null;
+  /** Deliveries that failed or expired in the last 24 hours. */
+  failed: number;
+  /** Deliveries waiting to be sent, retries included. */
+  pending: number;
 }
 
 export interface ActivityItem extends MonitorEvent {
@@ -96,6 +129,14 @@ export interface HealthcheckSummary extends Healthcheck {
   uptime_24h: number | null;
   avg_latency_24h: number | null;
   in_maintenance: boolean;
+  /** Who's on the current outage, if anyone. */
+  acknowledged: Acknowledgement | null;
+}
+
+/** Someone taking on an outage: reminders stop until the next status change. */
+export interface Acknowledgement {
+  by: string;
+  time: string;
 }
 
 interface Uptime {
@@ -167,6 +208,8 @@ export interface HeartbeatSummary extends Heartbeat {
   recent: Run[];
   stats_30d: RunStats;
   in_maintenance: boolean;
+  /** Who's on the current outage, if anyone. */
+  acknowledged: Acknowledgement | null;
 }
 
 export interface HeartbeatDetail {
@@ -208,6 +251,8 @@ export interface NotifierChannel {
   help: string;
   order: number;
   fields: SchemaField[];
+  /** Whether it can remind while a monitor stays down (chat, email, push; not paging tools). */
+  reminders: boolean;
 }
 
 export interface Notifier {
@@ -220,9 +265,12 @@ export interface Notifier {
   // Alerts for every monitor, or only those in monitor_ids.
   all_monitors: boolean;
   monitor_ids: number[];
+  /** Remind this often while a monitor stays down and nobody acknowledged it; 0 is off. */
+  repeat_seconds: number;
+  health: ChannelHealth;
 }
 
-export type NotifierInput = Omit<Notifier, "id" | "created_at">;
+export type NotifierInput = Omit<Notifier, "id" | "created_at" | "health">;
 
 // ── Incidents ─────────────────────────────────────────────────────────────
 
@@ -291,7 +339,12 @@ export interface KumaPlan {
   /** Kuma's status page groups, which become sections. */
   sections: StatusSection[];
   monitors: { kuma_id: number; monitor: Monitor; notes: string[] | null }[];
-  notifiers: { kuma_id: number; notifier: Notifier; kuma_monitor_ids: number[] | null; notes: string[] | null }[];
+  notifiers: {
+    kuma_id: number;
+    notifier: Omit<Notifier, "health">;
+    kuma_monitor_ids: number[] | null;
+    notes: string[] | null;
+  }[];
   skipped: KumaSkipped[];
 }
 
@@ -594,6 +647,7 @@ export const api = {
     request<SchedulePreview>("POST", "/api/heartbeats/preview", spec),
 
   // Both kinds: kind picks /api/healthchecks or /api/heartbeats.
+  acknowledge: (kind: MonitorKind, id: number) => request<void>("POST", `/api/${kind}s/${id}/acknowledge`),
   pauseMonitor: (kind: MonitorKind, id: number, paused: boolean) =>
     request<Monitor>("POST", `/api/${kind}s/${id}/pause`, { paused }),
   deleteMonitor: (kind: MonitorKind, id: number) => request<void>("DELETE", `/api/${kind}s/${id}`),
@@ -629,6 +683,8 @@ export const api = {
   updateNotifier: (id: number, n: NotifierInput) => request<Notifier>("PUT", `/api/notifiers/${id}`, n),
   deleteNotifier: (id: number) => request<void>("DELETE", `/api/notifiers/${id}`),
   testNotifier: (id: number) => request("POST", `/api/notifiers/${id}/test`),
+  retryDelivery: (d: Pick<Delivery, "alert_id" | "notifier_id">) =>
+    request<void>("POST", `/api/alerts/${d.alert_id}/deliveries/${d.notifier_id}/retry`),
 
   uptimyCheckIn: () => request<UptimyCheckIn>("GET", "/api/uptimy/heartbeat"),
   connectUptimyURL: (url: string) => request<UptimyCheckIn>("PUT", "/api/uptimy/heartbeat", { url }),

@@ -4,6 +4,24 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+### Added
+- **Alerts are retried until they're delivered.** Each alert is saved with the status change that caused it and sent to every channel on its own: a channel that's down or answers with an error is retried with backoff for up to an hour, while one that refuses it (a deleted webhook, a revoked token) isn't retried. Alerts about a monitor reach a channel in order, so a recovery never arrives before its outage. Alerts waiting to go out survive restarts and crashes.
+- **See whether an alert arrived.** Each event on a monitor's page shows how its alert went on every channel (sent, retrying, refused, given up, or not sent and why) with **Retry**, and **Notifications** shows each channel's last alert and recent failures. New metrics: `uptimy_agent_alert_deliveries_total` and `uptimy_agent_alert_deliveries_pending`.
+- **Recovery threshold:** `recovery_threshold` (in the form, YAML and the `upti.my/recovery-threshold` annotation) is how many good checks in a row bring a down healthcheck back up, so a flapping target doesn't send down/up pairs. `upti.my/failure-threshold` sets the failure threshold of discovered monitors.
+- **Reminders while down:** a channel can remind you every 15 minutes to once a day while a monitor stays down, so a muted channel or a missed message doesn't leave an outage unnoticed.
+- **Acknowledge** a down monitor to stop its reminders and tell your channels who's on it. Lists and the monitor's page show who acknowledged it.
+- `uptimy-agent validate monitors.yaml` checks a monitors file in CI without starting the agent: every problem with its monitor, unset `${VAR}`s as warnings (`--strict-env` for errors), and `--format json`.
+- `TRUSTED_PROXIES` sets which proxies' `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed. By default, loopback and private networks.
+- Webhook alerts carry an `id` that's the same on every attempt, and reminders and acknowledgements a `type`.
+- The Uptime Kuma importer points out monitors that re-sent their alerts while down, so you can turn on reminders.
+
+### Fixed
+- A down alert held for a maintenance window is no longer forgotten when the agent restarts during the window.
+- Alerts no longer get lost when the agent shuts down right after a status change.
+- A monitor down for longer than `RETENTION_DAYS` no longer comes back as pending after a restart and alerts again: its current status is kept.
+- Behind a proxy, failed sign-ins were counted against the proxy's address, so one person guessing passwords could lock everyone out for a while. They're now counted per client, from `X-Forwarded-For` sent by a trusted proxy.
+- `X-Forwarded-Proto` is only believed from trusted proxies when deciding whether the session cookie is Secure.
+
 ## [0.1.8] - 2026-10-07
 
 ### Changed

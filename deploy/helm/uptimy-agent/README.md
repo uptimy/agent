@@ -100,6 +100,7 @@ ingress:
 | `uptimy.existingSecret` | `""` | Secret with key `UPTIMY_HEARTBEAT_URL` |
 | `healthchecks` / `heartbeats` | `[]` | Monitors defined in values |
 | `retentionDays` | `30` | How long check results are kept |
+| `trustedProxies` | `private` | Proxies whose `X-Forwarded-For`/`-Proto` headers are believed: `private`, addresses or CIDRs, or `none` |
 | `metrics.serviceMonitor.enabled` | `false` | Create a Prometheus Operator ServiceMonitor for `/metrics` |
 | `metrics.serviceMonitor.tokenSecret.name` / `.key` | `""` / `token` | Secret with an agent API token (read-only is enough); required when enabled |
 | `metrics.serviceMonitor.interval` / `.labels` | `60s` / `{}` | Scrape interval, and labels your Prometheus selects on |

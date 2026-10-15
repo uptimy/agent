@@ -119,13 +119,33 @@ func (s *Store) daily(ctx context.Context, days int, query string, monitorID int
 
 // InsertEvent records a status transition.
 func (s *Store) InsertEvent(ctx context.Context, e monitor.Event) (monitor.Event, error) {
-	res, err := s.db.ExecContext(ctx, "INSERT INTO events (monitor_id, ts, status, message) VALUES (?, ?, ?, ?)",
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		e.ID, err = insertEvent(ctx, tx, e)
+		return err
+	})
+	return e, err
+}
+
+// insertEvent records a status transition. Acknowledgements and reminders
+// are about one outage, so any change ends them: a reminder still waiting
+// to go out would now be wrong.
+func insertEvent(ctx context.Context, tx *sql.Tx, e monitor.Event) (int64, error) {
+	res, err := tx.ExecContext(ctx, "INSERT INTO events (monitor_id, ts, status, message) VALUES (?, ?, ?, ?)",
 		e.MonitorID, e.Time.UnixMilli(), e.Status, e.Message)
 	if err != nil {
-		return e, err
+		return 0, err
 	}
-	e.ID, err = res.LastInsertId()
-	return e, err
+	if _, err := tx.ExecContext(ctx, "DELETE FROM acknowledgements WHERE monitor_id = ?", e.MonitorID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE alert_deliveries SET state = 'suppressed', detail = ?, done_at = ?
+		WHERE state = 'pending' AND alert_id IN
+			(SELECT id FROM alerts WHERE monitor_id = ? AND type IN ('reminder', 'acknowledged'))`,
+		"its status changed first", e.Time.UnixMilli(), e.MonitorID); err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 // ListEvents returns the newest events, newest first. monitorID 0 means all monitors.

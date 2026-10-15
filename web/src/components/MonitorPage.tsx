@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Pause, Pencil, Play, Trash2, type LucideIcon } from "lucide-react";
-import { api, type Monitor, type MonitorEvent } from "@/lib/api";
+import { ArrowLeft, Eye, Pause, Pencil, Play, Trash2, type LucideIcon } from "lucide-react";
+import { api, type Acknowledgement, type Monitor, type MonitorEvent, type Status } from "@/lib/api";
 import { formatDateTime } from "@/lib/utils";
 import { kinds, monitorPath } from "@/lib/monitors";
 import { confirm } from "@/components/ui/confirm";
@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorNote, PageHeader } from "@/components/Layout";
 import { StatusDot } from "@/components/status";
 import { useCanEdit } from "@/components/AuthGate";
+import { Deliveries } from "@/components/Deliveries";
 
 // What a healthcheck's page and a heartbeat's page have in common.
 
@@ -28,7 +29,13 @@ export function BackLink({ m }: { m: Pick<Monitor, "kind"> }) {
 }
 
 /** Pause or resume, edit and delete. Editing and deleting are left to the file for monitors defined there. */
-export function MonitorActions({ m, children }: { m: Monitor; children?: React.ReactNode }) {
+export function MonitorActions({
+  m,
+  children,
+}: {
+  m: Monitor & { status: Status; acknowledged: Acknowledgement | null };
+  children?: React.ReactNode;
+}) {
   const canEdit = useCanEdit();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -41,6 +48,14 @@ export function MonitorActions({ m, children }: { m: Monitor; children?: React.R
       toast.success(paused ? `${capitalize(k.noun)} paused` : `${capitalize(k.noun)} resumed`, m.name);
     },
     onError: (err) => toast.error(`Couldn't ${m.paused ? "resume" : "pause"} ${m.name}`, err.message),
+  });
+  const acknowledge = useMutation({
+    mutationFn: () => api.acknowledge(m.kind, m.id),
+    onSuccess: () => {
+      qc.invalidateQueries();
+      toast.success("Acknowledged", `No more reminders while ${m.name} is down. Your channels hear you're on it.`);
+    },
+    onError: (err) => toast.error(`Couldn't acknowledge ${m.name}`, err.message),
   });
   const remove = useMutation({
     mutationFn: () => api.deleteMonitor(m.kind, m.id),
@@ -57,6 +72,11 @@ export function MonitorActions({ m, children }: { m: Monitor; children?: React.R
   const history = m.kind === "heartbeat" ? "run history" : "check history";
   return (
     <>
+      {m.status === "down" && !m.acknowledged && (
+        <Button onClick={() => acknowledge.mutate()} disabled={acknowledge.isPending}>
+          <Eye /> Acknowledge
+        </Button>
+      )}
       {children}
       <Button variant="outline" onClick={() => pause.mutate(!m.paused)} disabled={pause.isPending}>
         {m.paused ? <Play /> : <Pause />} {m.paused ? "Resume" : "Pause"}
@@ -125,7 +145,10 @@ export function EventsCard({ id, describe }: { id: number; describe: (e: Monitor
             {events.data.map((e) => (
               <li key={e.id} className="flex items-start gap-3 py-3 text-sm">
                 <StatusDot status={e.status} className="mt-1.5" />
-                <div className="min-w-0 flex-1 break-words">{describe(e)}</div>
+                <div className="min-w-0 flex-1 break-words">
+                  {describe(e)}
+                  {e.deliveries && e.deliveries.length > 0 && <Deliveries deliveries={e.deliveries} />}
+                </div>
                 <time className="shrink-0 text-xs text-muted-foreground" dateTime={e.time}>
                   {formatDateTime(e.time)}
                 </time>

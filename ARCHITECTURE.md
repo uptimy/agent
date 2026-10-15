@@ -55,7 +55,7 @@ In SQLite a `monitors` row holds what's shared, and a `healthchecks` or `heartbe
 2. The scheduler runs one goroutine per monitor. For a healthcheck it calls `checks.Run` on every interval, with the check's timeout.
 3. `checks.Run` finds the check type's **probe** (registered by `internal/checks/<type>.go`) and returns an `Outcome`: OK, plus a message.
 4. The scheduler stores the result and publishes it to the **events hub**, which streams it to open browsers over Server-Sent Events.
-5. The healthcheck goes down after `failure_threshold` consecutive failures and up on the next success. Each change is recorded as an **event**; going down, and recovering from down, also sends an **alert** to every enabled notification channel.
+5. The healthcheck goes down after `failure_threshold` consecutive failures and up again after `recovery_threshold` consecutive successes. Each change is recorded as an **event**; going down, and recovering from down, also sends an **alert** to every enabled notification channel.
 
 ## A heartbeat, end to end
 
@@ -67,7 +67,15 @@ In SQLite a `monitors` row holds what's shared, and a `healthchecks` or `heartbe
 
 ## Alerts
 
-An alert goes to the enabled channels that cover the monitor: those for every monitor, and those it's been added to (`store.NotifiersFor`). During a maintenance window covering the monitor, a down alert is held instead (`scheduler/maintenance.go`). When the window ends, a monitor that's still down alerts then; one that recovered sends nothing, since nobody heard it went down. Held alerts live in memory, so a restart during maintenance forgets them.
+Alerts go through an outbox, so none is lost to a failing channel, a crash or a restart:
+
+1. The scheduler records a status change and its alert in **one transaction** (`store.InsertEventAlert`): an `alerts` row with the alert as it will be sent, and an `alert_deliveries` row for each enabled channel that covers the monitor (those for every monitor, and those it's been added to). A change is never recorded without its alert.
+2. The **dispatcher** (`internal/delivery`) sends due deliveries, each channel separately. Failures are retried with backoff for up to `delivery.MaxAge` (an hour); a refusal (`notify.IsPermanent`: a 4xx other than 408/429, or an SMTP 5xx) fails at once. Deliveries along one channel and monitor go strictly in order, so a recovery waits for its outage. A recovery is suppressed on a channel that was alerted about the outage but never got any of those alerts.
+3. Each attempt's outcome is saved on the delivery and pushed to the UI. Pending deliveries are picked up again on the next start, so delivery is at least once; the alert's `id` lets receivers drop copies.
+
+During a maintenance window covering the monitor, a down alert's deliveries are **held** (`scheduler/maintenance.go`). When the window ends, a monitor that's still down (by its newest event, so this works right after a restart) has its alert released as "still down after maintenance"; one that recovered had both its outage and recovery suppressed, since nobody heard it went down.
+
+While a monitor stays down, channels with a repeat interval get **reminders** (`scheduler/reminders.go`), counted from the last alert each one got. **Acknowledging** the outage stores who's on it, stops the reminders and tells the channels. Any status change ends both, in the same transaction as the event. Reminders and acknowledgements are alerts of their own `type`, delivered like any other, and only to channels with `Reminders` (not paging or incident tools, which track outages themselves).
 
 ## Extension points
 
@@ -93,6 +101,8 @@ SQLite through `modernc.org/sqlite` (pure Go, so the binary builds without cgo),
 | Healthchecks, heartbeats | `monitors` + `healthchecks` / `heartbeats` | `monitor.Monitor` |
 | History | `results`, `runs`, `events` | `monitor.Result`, `monitor.Run`, `monitor.Event` |
 | Alert routing | `notifiers.all_monitors` + `notifier_monitors` | `notify.Notifier` (`AllMonitors`, `MonitorIDs`) |
+| Alerts and their delivery to each channel (the outbox) | `alerts` + `alert_deliveries` | `notify.Alert`, `notify.Delivery` |
+| Who's on an outage | `acknowledgements` | `monitor.Acknowledgement` |
 | Maintenance windows | `maintenance` + `maintenance_monitors` | `maintenance.Window` |
 | Incidents | `incidents` + `incident_updates` + `incident_monitors` | `incident.Incident` |
 | The status page's announcement | `settings` (JSON, apart from the page's settings) | `statuspage.Announcement` |

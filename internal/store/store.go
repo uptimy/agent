@@ -233,6 +233,51 @@ var migrations = []string{
 		monitor_id INTEGER NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
 		PRIMARY KEY (incident_id, monitor_id)
 	);`,
+
+	// 6: the alert outbox. An alert is written with the event that caused
+	// it, and delivered to each channel separately, with retries.
+	`CREATE TABLE alerts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		monitor_id INTEGER NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+		event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+		status TEXT NOT NULL,
+		-- '' for a status change, 'reminder' or 'acknowledged'.
+		type TEXT NOT NULL DEFAULT '',
+		ts INTEGER NOT NULL,
+		-- The notify.Alert as sent, so a retry sends what happened then.
+		payload TEXT NOT NULL
+	);
+	CREATE INDEX alerts_monitor ON alerts(monitor_id, id);
+	CREATE INDEX alerts_event ON alerts(event_id);
+	CREATE INDEX alerts_ts ON alerts(ts);
+	CREATE TABLE alert_deliveries (
+		alert_id INTEGER NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+		notifier_id INTEGER NOT NULL REFERENCES notifiers(id) ON DELETE CASCADE,
+		state TEXT NOT NULL,
+		attempts INTEGER NOT NULL DEFAULT 0,
+		next_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL,
+		detail TEXT NOT NULL DEFAULT '',
+		done_at INTEGER,
+		PRIMARY KEY (alert_id, notifier_id)
+	);
+	CREATE INDEX alert_deliveries_state ON alert_deliveries(state, next_at);
+	CREATE INDEX alert_deliveries_notifier ON alert_deliveries(notifier_id, done_at);
+
+	-- Consecutive successes before a down healthcheck is up again.
+	ALTER TABLE healthchecks ADD COLUMN recovery_threshold INTEGER NOT NULL DEFAULT 1;
+
+	-- Remind a channel every repeat_seconds while a monitor stays down; 0 is off.
+	ALTER TABLE notifiers ADD COLUMN repeat_seconds INTEGER NOT NULL DEFAULT 0;
+
+	-- Someone is on it: no more reminders for this outage. Cleared by the
+	-- monitor's next status change.
+	CREATE TABLE acknowledgements (
+		monitor_id INTEGER PRIMARY KEY REFERENCES monitors(id) ON DELETE CASCADE,
+		event_id INTEGER NOT NULL,
+		by_user TEXT NOT NULL,
+		ts INTEGER NOT NULL
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -266,10 +311,22 @@ func (s *Store) migrate(ctx context.Context) error {
 // Prune deletes history (results, runs, events) older than before.
 func (s *Store) Prune(ctx context.Context, before time.Time) error {
 	ms := before.UnixMilli()
-	for _, table := range []string{"results", "runs", "events"} {
+	for _, table := range []string{"results", "runs"} {
 		if _, err := s.db.ExecContext(ctx, "DELETE FROM "+table+" WHERE ts < ?", ms); err != nil { //nolint:gosec // G202: table names are constants
 			return err
 		}
+	}
+	// A monitor's newest event is its current status, which a restart
+	// restores: keep it however old, or a monitor down for longer than the
+	// retention would come back pending and alert again.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM events WHERE ts < ?
+		AND id NOT IN (SELECT MAX(id) FROM events GROUP BY monitor_id)`, ms); err != nil {
+		return err
+	}
+	// Alerts still waiting to go out are kept.
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM alerts WHERE ts < ? AND NOT EXISTS
+		(SELECT 1 FROM alert_deliveries WHERE alert_id = alerts.id AND state IN ('pending', 'held'))`, ms); err != nil {
+		return err
 	}
 	if _, err := s.db.ExecContext(ctx, "DELETE FROM maintenance WHERE ends_at < ?", ms); err != nil {
 		return err

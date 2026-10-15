@@ -16,10 +16,11 @@ var ntfyTopic = regexp.MustCompile(`^[-_A-Za-z0-9]{1,64}$`)
 
 func init() {
 	Register(Channel{
-		Type:  "ntfy",
-		Label: "ntfy",
-		Help:  "Push notifications to your phone. Pick a topic on ntfy.sh or your own ntfy server, and subscribe to it in the ntfy app.",
-		Order: 50,
+		Type:      "ntfy",
+		Reminders: true,
+		Label:     "ntfy",
+		Help:      "Push notifications to your phone. Pick a topic on ntfy.sh or your own ntfy server, and subscribe to it in the ntfy app.",
+		Order:     50,
 		Fields: []schema.Field{
 			{Key: "topic", Label: "Topic", Input: schema.Text, Placeholder: "acme-alerts-7f3k", Required: true,
 				Hint: "Anyone who knows a topic on ntfy.sh can read it: pick one that's hard to guess."},
@@ -48,8 +49,13 @@ func init() {
 				"priority": 5,
 				"tags":     []string{"rotating_light"},
 			}
-			if a.Status == "up" {
+			switch {
+			case a.Status == "up":
 				msg["priority"], msg["tags"] = 3, []string{"white_check_mark"}
+			case a.Type == AlertAcknowledged:
+				msg["priority"], msg["tags"] = 3, []string{"eyes"}
+			case a.Type == AlertReminder:
+				msg["priority"] = 4
 			}
 			var headers map[string]string
 			if c.Token != "" {

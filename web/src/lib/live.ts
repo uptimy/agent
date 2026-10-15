@@ -68,6 +68,12 @@ export function useLiveUpdates(enabled: boolean) {
           if (isHeartbeat(qc, id)) reloadHeartbeat(id);
           else if (!applyToHealthchecks(qc, msg)) reloadHealthchecks();
           return;
+        case "delivery":
+          soon(`delivery-${id}`, () => {
+            qc.invalidateQueries({ queryKey: ["events", id] });
+            qc.invalidateQueries({ queryKey: ["notifiers"] });
+          });
+          return;
         case "result":
           aggregatesStale = true;
           if (!applyToHealthchecks(qc, msg)) reloadHealthchecks();

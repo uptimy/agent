@@ -27,7 +27,7 @@ Because it runs next to your services, it can check things that external monitor
 - **Healthchecks:** HTTP(S) with status and keyword assertions, Postgres, MySQL and Redis (real logins and queries, not just an open port), ping, TCP, DNS, TLS expiry and Kubernetes workloads
 - **Heartbeats:** cron jobs, backups and workers ping a URL when they run, or, for a Kubernetes CronJob, nothing at all: the agent reads its Jobs. Schedules are an interval or a cron expression in any time zone; you see on-time rate, missed and failed runs, exit codes and how long each run took, and you're alerted when a run is missed or fails
 - **Dashboard:** both at a glance, split into Healthchecks and Heartbeats like in Uptimy
-- **Alerts:** email, Slack, Microsoft Teams, Discord, Telegram, ntfy, PagerDuty, webhooks, Uptimy (alerts become incidents there, which can run workflows), and 30+ more services through one [Shoutrrr](https://shoutrrr.nickfedor.com/latest/services/overview/) URL (Pushover, Gotify, Matrix, Google Chat, Mattermost, Opsgenie, Signal, ...), fired on down and on recovery, with a consecutive-failure threshold to avoid flapping. Each channel alerts for every monitor or only the ones you choose
+- **Alerts:** email, Slack, Microsoft Teams, Discord, Telegram, ntfy, PagerDuty, webhooks, Uptimy (alerts become incidents there, which can run workflows), and 30+ more services through one [Shoutrrr](https://shoutrrr.nickfedor.com/latest/services/overview/) URL (Pushover, Gotify, Matrix, Google Chat, Mattermost, Opsgenie, Signal, ...), fired on down and on recovery, with failure and recovery thresholds against flapping. Alerts are retried until the channel takes them, so a Slack hiccup or a restart doesn't lose one, and each event shows whether it reached every channel. Reminders while a monitor stays down until someone acknowledges it. Each channel alerts for every monitor or only the ones you choose
 - **Maintenance windows:** planned work doesn't page anyone, and is announced on the status page. A monitor that's still down when the window ends alerts then
 - **Status page:** public, at `/status` or on its own domain (`status.example.com`), which serves only the status page so sign-in and the dashboard stay private. Admins set a logo (with an optional dark-mode version), accent color and website link, create sections and drag monitors into order with public names, with a live preview, much like the Uptimy app. New monitors stay off the page until you add them. It shows names with uptime (healthchecks) or on-time runs (heartbeats) only, never internal hostnames
 - **Incidents and an announcement:** tell visitors what's going on with an incident (severity, affected monitors, and a timeline from investigating to resolved), posted under **Incidents**, or with the status page's announcement for news like a migration
@@ -120,6 +120,8 @@ Annotations adjust what's checked:
 | `upti.my/grace` | CronJob | the Job's `activeDeadlineSeconds` plus a minute, or else the time between runs, at most `1h` |
 | `upti.my/expected-status` | HTTP checks | `200-399` |
 | `upti.my/keyword` | HTTP checks | – |
+| `upti.my/failure-threshold` | all but CronJobs | `2` failed checks in a row before it's down (1–10) |
+| `upti.my/recovery-threshold` | all but CronJobs | `1` good check in a row before it's up again (1–10) |
 
 **CronJobs need no ping.** The agent reads each discovered CronJob's Jobs every 10 seconds and records every run at the times Kubernetes saw: when the Job started, when it completed or failed, and for a failure the reason with the container's exit code (`BackoffLimitExceeded; container backup exited with code 137 (OOMKilled)`). Missed runs come from the schedule as for any heartbeat. A run must finish within the grace period after it's due, so the default grace leaves room for the job itself. Suspending the CronJob pauses its heartbeat, and resuming it resumes it.
 
@@ -146,13 +148,23 @@ Environment variables set how the agent runs, its secrets, and (optionally) moni
 | `MONITORS_FILE` | – | Path to a YAML file of monitors |
 | `MONITORS_YAML` | – | The YAML itself, for platforms where mounting files is awkward |
 | `KUBERNETES_DISCOVERY` | `true` | Create monitors for resources labeled `upti.my/monitor: "true"` (see [Auto-discovery](#auto-discovery)). Only applies inside a cluster |
-| `RETENTION_DAYS` | `30` | How long check results, heartbeat runs and events are kept |
+| `RETENTION_DAYS` | `30` | How long check results, heartbeat runs, events and alerts are kept. A monitor's current status is kept however old |
+| `TRUSTED_PROXIES` | `private` | Proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed: who signed in (for the sign-in rate limit) and whether they used HTTPS (for Secure cookies). Comma-separated addresses and ranges (`10.0.0.0/8, 192.0.2.1`), `private` for loopback and private networks (where an Ingress, Railway's edge or a local proxy connects from), or `none` |
 | `UPTIMY_HEARTBEAT_URL` | – | Optional. Pins the [Watch the watcher](#watch-the-watcher) heartbeat, for agents without a persistent volume; otherwise connect it in the UI |
 | `AGENT_NAME` | hostname | How this agent is labeled in Uptimy |
 
 ### Monitors in YAML
 
 The file has two lists, `healthchecks` and `heartbeats`; see [`examples/monitors.yaml`](examples/monitors.yaml) for every check type and both kinds of schedule. Monitors from YAML are matched by name: changing one keeps its history, and removing one deletes it on the next start. They're shown read-only in the UI, though you can still pause them during maintenance and add them to the status page. Monitors created in the UI are never touched by the file. Unknown settings are an error, so a typo doesn't go unnoticed.
+
+Check a file before it ships, in CI or a pre-commit hook, without starting the agent:
+
+```sh
+uptimy-agent validate monitors.yaml           # or - for stdin; with no file, MONITORS_FILE / MONITORS_YAML
+docker run --rm -v "$PWD:/w" ghcr.io/uptimy/agent validate /w/monitors.yaml
+```
+
+It reports every problem with its monitor and exits 1 if there are any. A `${VAR}` a database target uses that isn't set is a warning, since CI rarely has the secrets; `--strict-env` makes it an error. `--format json` prints a report for tools.
 
 ### Users and roles
 
@@ -216,13 +228,43 @@ Ping monitors send three ICMP echo requests and are up if any reply comes back. 
 
 A channel alerts for every monitor (the default, including monitors added later) or only for the monitors you choose. Set it on the channel under **Notifications**, or tick channels under **Alerts** when editing a monitor.
 
+### Alert delivery
+
+Every alert is saved with the status change that caused it and then delivered to each channel on its own, so one failing channel never holds up or repeats the others:
+
+- A channel that's unreachable or answers with an error like 500 or 429 is retried after 10 seconds, 30 seconds, 1, 2 and then every 5 minutes (sooner or later if it sends `Retry-After`), for up to an hour. One that refuses the alert outright, like a deleted webhook (404) or a revoked token (401), isn't retried.
+- Alerts about a monitor reach a channel in order: a recovery never arrives before the outage it ends. If a channel never got any alert about an outage, it doesn't get the recovery either.
+- Alerts waiting to be sent survive restarts and crashes and go out when the agent is back. Delivery is at least once: an alert cut off after the channel took it is sent again. Each alert has an `id` that's the same on every attempt, so a webhook receiver can drop the copies.
+- Each event on a monitor's page shows how its alert went on every channel (sent, retrying, refused, given up, or not sent and why), with **Retry**. **Notifications** shows each channel's last alert and anything that failed in the last day. `/metrics` counts deliveries by result.
+
+**Thresholds:** a healthcheck goes down after `failure_threshold` failed checks in a row (2 by default) and comes back up after `recovery_threshold` good ones (1 by default). Raise the recovery threshold for a target that flaps, so it doesn't send down/up pairs.
+
+**Reminders and acknowledging:** set **Remind while down** on a channel (every 15 minutes to once a day) to be reminded while a monitor stays down, so a muted channel or a missed message doesn't leave an outage unnoticed. **Acknowledge** on a down monitor stops the reminders for that outage and tells the channels who's on it. Reminders pause during maintenance, and the next status change ends both. PagerDuty and Uptimy track outages themselves, so they don't get reminders.
+
+The webhook channel posts the alert as JSON:
+
+```json
+{
+  "id": 42,
+  "monitor_id": 7,
+  "monitor_name": "Checkout API",
+  "kind": "healthcheck",
+  "target": "https://shop.example.com/health",
+  "status": "down",
+  "message": "unexpected status 503",
+  "time": "2026-10-09T20:49:22.334Z"
+}
+```
+
+Reminders and acknowledgements have `"status": "down"` and a `type` of `"reminder"` or `"acknowledged"`, with `down_since` and, for acknowledgements, `acknowledged_by`. Status changes have no `type`.
+
 ### More services
 
 For anything without its own channel, add a **More services (Shoutrrr)** channel with a [Shoutrrr URL](https://shoutrrr.nickfedor.com/latest/services/overview/): `pushover://shoutrrr:<token>@<user>`, `gotify://<host>/<token>`, `matrix://<user>:<password>@<host>`, `googlechat://chat.googleapis.com/v1/spaces/...`, `opsgenie://api.opsgenie.com/<key>`, and 30+ more. The URL holds the service's credentials, so it's stored like a password and never shown in errors.
 
 ### Maintenance
 
-Schedule maintenance under **Maintenance** before deploys, upgrades or migrations: for all monitors or some, starting now or later. During the window the monitors keep being checked, but nobody is alerted. If one is still down when the window ends, its alert goes out then; if it recovered, nothing is sent. Public windows are announced on the status page up to a week ahead and stay listed as completed for a week after, and the affected monitors are marked as under maintenance rather than down.
+Schedule maintenance under **Maintenance** before deploys, upgrades or migrations: for all monitors or some, starting now or later. During the window the monitors keep being checked, but nobody is alerted. If one is still down when the window ends, its alert goes out then, even if the agent restarted in between; if it recovered, nothing is sent. Public windows are announced on the status page up to a week ahead and stay listed as completed for a week after, and the affected monitors are marked as under maintenance rather than down.
 
 ### Incidents
 
