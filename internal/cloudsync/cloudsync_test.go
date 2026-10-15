@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/connect"
+	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/store"
 )
@@ -26,6 +27,9 @@ type fakeCloud struct {
 	*httptest.Server
 	mu           sync.Mutex
 	interval     int
+	statusChange int
+	sample       int
+	locationPuts int
 	healthchecks map[string]connect.MirroredHealthcheck // clientRef -> last PUT
 	heartbeats   map[string]map[string]any              // uuid -> body
 	deleted      []string
@@ -35,7 +39,7 @@ type fakeCloud struct {
 }
 
 func newFakeCloud(t *testing.T) *fakeCloud {
-	f := &fakeCloud{interval: 60, healthchecks: map[string]connect.MirroredHealthcheck{}, heartbeats: map[string]map[string]any{}}
+	f := &fakeCloud{interval: 60, statusChange: 10, sample: 300, healthchecks: map[string]connect.MirroredHealthcheck{}, heartbeats: map[string]map[string]any{}}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Close)
 	return f
@@ -59,7 +63,9 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	switch {
 	case r.Method == http.MethodPut && path == "/v1/api/agent/location":
-		reply(http.StatusOK, map[string]any{"locationUuid": "loc-1", "uploadIntervalSeconds": f.interval, "withinPlan": true})
+		f.locationPuts++
+		reply(http.StatusOK, map[string]any{"locationUuid": "loc-1", "uploadIntervalSeconds": f.interval,
+			"statusChangeIntervalSeconds": f.statusChange, "sampleIntervalSeconds": f.sample, "withinPlan": true})
 	case r.Method == http.MethodDelete && path == "/v1/api/agent/location":
 		w.WriteHeader(http.StatusNoContent)
 	case strings.HasPrefix(path, "/v1/api/agent/healthchecks/"):
@@ -126,7 +132,8 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 		var u connect.Upload
 		_ = json.Unmarshal(raw, &u)
 		f.uploads = append(f.uploads, u)
-		reply(http.StatusAccepted, map[string]any{"accepted": len(u.Healthchecks) + len(u.Heartbeats), "uploadIntervalSeconds": f.interval})
+		reply(http.StatusAccepted, map[string]any{"accepted": len(u.Healthchecks) + len(u.Heartbeats), "uploadIntervalSeconds": f.interval,
+			"statusChangeIntervalSeconds": f.statusChange, "sampleIntervalSeconds": f.sample})
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
@@ -199,7 +206,7 @@ func TestFirstCycleSetsUpMirrorsAndUploads(t *testing.T) {
 	}
 
 	conn, _ := e.st.UptimyConnection(ctx)
-	if conn.LocationUUID != "loc-1" || conn.UploadIntervalSeconds != 60 {
+	if conn.LocationUUID != "loc-1" || conn.UploadIntervalSeconds != 60 || conn.StatusChangeIntervalSeconds != 10 || conn.SampleIntervalSeconds != 300 {
 		t.Fatalf("connection %+v", conn)
 	}
 	installID, _ := e.st.InstallID(ctx)
@@ -288,14 +295,119 @@ func TestUnchangedResultsAreThinned(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
-	start := e.now.Add(-5 * time.Minute)
-	// Every 10s for 3 minutes, all up: one per 60s interval is enough.
-	for i := 0; i < 18; i++ {
-		_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: start.Add(time.Duration(i) * 10 * time.Second), OK: true})
+	start := e.now.Add(-13 * time.Minute)
+	// Every 10s for 12 minutes, up but for one failure at 200s: one unchanged
+	// result per 5-minute sample interval, and every status change.
+	var want []string
+	for i := 0; i < 72; i++ {
+		at := start.Add(time.Duration(i) * 10 * time.Second)
+		_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: at, OK: i != 20})
+		if i == 0 || i == 20 || i == 21 || i == 51 {
+			want = append(want, at.Format(time.TimeOnly))
+		}
 	}
 	e.s.cycle(ctx)
-	if n := len(e.cloud.uploads[0].Healthchecks); n != 3 {
-		t.Fatalf("%d results uploaded, want 3 (one per minute)", n)
+	var got []string
+	for _, h := range e.cloud.uploads[0].Healthchecks {
+		got = append(got, h.CheckedAt.Format(time.TimeOnly))
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("uploaded results at %v, want %v (first, degraded, up again, 5 minutes later)", got, want)
+	}
+}
+
+// A status change uploads no sooner than the status change interval after
+// the last upload; an edit to monitors still uploads after the debounce.
+func TestWatchPacesStatusChanges(t *testing.T) {
+	e := newEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.cloud.statusChange = 120
+	e.s.cycle(ctx) // uploads at e.now
+	e.now = e.now.Add(30 * time.Second)
+
+	waits := make(chan time.Duration, 10)
+	fire := make(chan time.Time)
+	e.s.after = func(d time.Duration) <-chan time.Time {
+		waits <- d
+		return fire
+	}
+	msgs := make(chan events.Message)
+	go e.s.Watch(ctx, func() (<-chan events.Message, func()) { return msgs, func() {} })
+	next := func() time.Duration {
+		t.Helper()
+		select {
+		case d := <-waits:
+			return d
+		case <-time.After(5 * time.Second):
+			t.Fatal("no timer started")
+			return 0
+		}
+	}
+
+	msgs <- events.Message{Type: "status"}
+	if d := next(); d != 90*time.Second {
+		t.Fatalf("status change waits %s, want 90s (120s after the last upload)", d)
+	}
+	msgs <- events.Message{Type: "status"} // already pending: no second timer
+	msgs <- events.Message{Type: "monitors"}
+	if d := next(); d != debounce {
+		t.Fatalf("monitors edit waits %s, want the debounce", d)
+	}
+	msgs <- events.Message{Type: "status"} // later than the pending trigger
+	fire <- time.Time{}
+	select {
+	case <-e.s.wake:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no cycle triggered")
+	}
+	if len(waits) != 0 {
+		t.Fatalf("%d extra timers started", len(waits))
+	}
+
+	// Long after the last upload, a status change only waits the debounce.
+	e.now = e.now.Add(10 * time.Minute)
+	msgs <- events.Message{Type: "status"}
+	if d := next(); d != debounce {
+		t.Fatalf("status change waits %s, want the debounce", d)
+	}
+}
+
+// New status change and sample intervals from an upload are stored without
+// setting the location up again; a new upload interval sets it up again (its
+// check-in heartbeat checks in at that interval).
+func TestUploadResponseUpdatesIntervals(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.s.cycle(ctx)
+
+	e.cloud.statusChange, e.cloud.sample = 30, 600
+	e.s.cycle(ctx)
+	conn, _ := e.st.UptimyConnection(ctx)
+	if conn.LocationUUID != "loc-1" || conn.StatusChangeIntervalSeconds != 30 || conn.SampleIntervalSeconds != 600 || e.cloud.locationPuts != 1 {
+		t.Fatalf("connection %+v after %d set-ups, want the new intervals and one set-up", conn, e.cloud.locationPuts)
+	}
+	if e.s.statusEvery != 30*time.Second {
+		t.Fatalf("status changes every %s, want 30s", e.s.statusEvery)
+	}
+
+	e.cloud.interval = 300
+	e.s.cycle(ctx)
+	if conn, _ := e.st.UptimyConnection(ctx); conn.LocationUUID != "" {
+		t.Fatalf("connection %+v, want the location forgotten", conn)
+	}
+	e.s.cycle(ctx)
+	conn, _ = e.st.UptimyConnection(ctx)
+	if conn.UploadIntervalSeconds != 300 || e.cloud.locationPuts != 2 {
+		t.Fatalf("connection %+v after %d set-ups, want 300s and a second set-up", conn, e.cloud.locationPuts)
+	}
+}
+
+// An older Cloud sends only the upload interval.
+func TestIntervalDefaults(t *testing.T) {
+	upload, statusChange, sample := intervals(&connect.Connection{UploadIntervalSeconds: 60})
+	if upload != time.Minute || statusChange != time.Minute || sample != defaultSampleInterval {
+		t.Fatalf("intervals %s %s %s", upload, statusChange, sample)
 	}
 }
 

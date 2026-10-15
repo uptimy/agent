@@ -136,11 +136,15 @@ type Connection struct {
 	// Paused mirrors the heartbeat's paused state in Uptimy.
 	Paused bool `json:"paused,omitempty"`
 
-	// Cloud sync (internal/cloudsync): the agent's private location and how
-	// often it uploads (the plan's check interval). Empty LocationUUID means
-	// the sync hasn't set the connection up yet, e.g. one made before 0.3.
-	LocationUUID          string `json:"location_uuid,omitempty"`
-	UploadIntervalSeconds int    `json:"upload_interval_seconds,omitempty"`
+	// Cloud sync (internal/cloudsync): the agent's private location, how
+	// often it uploads, how soon a status change may follow the last upload
+	// (the plan's check interval), and how often an unchanged result is sent.
+	// Empty LocationUUID means the sync hasn't set the connection up yet,
+	// e.g. one made before 0.3.
+	LocationUUID                string `json:"location_uuid,omitempty"`
+	UploadIntervalSeconds       int    `json:"upload_interval_seconds,omitempty"`
+	StatusChangeIntervalSeconds int    `json:"status_change_interval_seconds,omitempty"`
+	SampleIntervalSeconds       int    `json:"sample_interval_seconds,omitempty"`
 	// During a maintenance window: when it ends, and the grace to restore.
 	MaintenanceUntil   *time.Time `json:"maintenance_until,omitempty"`
 	NormalGraceSeconds int        `json:"normal_grace_seconds,omitempty"`

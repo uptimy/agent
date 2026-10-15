@@ -35,9 +35,11 @@ func (e *RetryAfterError) Error() string { return "Uptimy asked to retry in " + 
 
 // Location is the agent's private location in Cloud.
 type Location struct {
-	UUID                  string `json:"locationUuid"`
-	UploadIntervalSeconds int    `json:"uploadIntervalSeconds"`
-	WithinPlan            bool   `json:"withinPlan"`
+	UUID                        string `json:"locationUuid"`
+	UploadIntervalSeconds       int    `json:"uploadIntervalSeconds"`
+	StatusChangeIntervalSeconds int    `json:"statusChangeIntervalSeconds"`
+	SampleIntervalSeconds       int    `json:"sampleIntervalSeconds"`
+	WithinPlan                  bool   `json:"withinPlan"`
 }
 
 // PutLocation creates or renames the agent's location (keyed by install id).
@@ -204,8 +206,10 @@ type UploadResult struct {
 		UUID   string `json:"uuid"`
 		Reason string `json:"reason"`
 	} `json:"rejected"`
-	Duplicate             bool `json:"duplicate"`
-	UploadIntervalSeconds int  `json:"uploadIntervalSeconds"`
+	Duplicate                   bool `json:"duplicate"`
+	UploadIntervalSeconds       int  `json:"uploadIntervalSeconds"`
+	StatusChangeIntervalSeconds int  `json:"statusChangeIntervalSeconds"`
+	SampleIntervalSeconds       int  `json:"sampleIntervalSeconds"`
 }
 
 // UploadResults sends one batch to ingest. A repeat of a stored batch is

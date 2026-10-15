@@ -3,9 +3,11 @@
 //
 // The agent stays the source of truth: it defines, runs and judges its
 // monitors and alerts on its own. Cloud gets a read-only copy of each
-// monitor, every status change, and a thinned history (at most one result per
-// monitor per upload interval, the plan's check interval). Each upload also
-// checks the agent in: Cloud alerts when uploads stop.
+// monitor, every status change, and a thinned history (at most one unchanged
+// result per monitor per sample interval). Uploads run every upload interval;
+// a status change is sent sooner, at most once per status change interval
+// (the plan's check interval). Each upload also checks the agent in: Cloud
+// alerts when uploads stop.
 package cloudsync
 
 import (
@@ -39,6 +41,12 @@ const (
 	maxBatchesPerCycle = 20
 	defaultInterval    = 5 * time.Minute
 	retryInterval      = time.Minute
+	// Without a sample interval from Cloud: one unchanged result per monitor
+	// per 5 minutes.
+	defaultSampleInterval = 5 * time.Minute
+	// Watch waits this long after an event, so a burst of edits or status
+	// changes is sent in one upload.
+	debounce = 5 * time.Second
 	// statusSlack covers the moment between a result being saved and the
 	// status change it causes; far shorter than any check interval.
 	statusSlack = time.Second
@@ -66,12 +74,15 @@ type Syncer struct {
 	Version   string
 	Log       *slog.Logger
 
-	wake chan struct{}
-	now  func() time.Time
+	wake  chan struct{}
+	now   func() time.Time
+	after func(time.Duration) <-chan time.Time
 
 	mu       sync.Mutex
 	status   Status
 	lastFull time.Time
+	// statusEvery is the connection's status change interval, for Watch.
+	statusEvery time.Duration
 	// lastSent thins uploads: per monitor, when its last result was sent and
 	// with which status.
 	lastSent map[int64]sent
@@ -86,7 +97,7 @@ type sent struct {
 func New(st *store.Store, client func() *connect.Client, agentName, version string, log *slog.Logger) *Syncer {
 	return &Syncer{
 		Store: st, Client: client, AgentName: agentName, Version: version, Log: log,
-		wake: make(chan struct{}, 1), now: time.Now, lastSent: map[int64]sent{},
+		wake: make(chan struct{}, 1), now: time.Now, after: time.After, lastSent: map[int64]sent{},
 	}
 }
 
@@ -100,11 +111,14 @@ func (s *Syncer) Trigger() {
 
 // Watch runs a cycle shortly after monitors change or a monitor's status
 // changes, so edits reach Cloud in seconds and a status change opens or
-// resolves the Cloud incident without waiting for the next upload.
+// resolves the Cloud incident without waiting for the next upload. A status
+// change uploads no sooner than the status change interval after the last
+// upload (the plan's check interval).
 func (s *Syncer) Watch(ctx context.Context, subscribe func() (<-chan events.Message, func())) {
 	msgs, unsubscribe := subscribe()
 	defer unsubscribe()
-	var debounce <-chan time.Time
+	var timer <-chan time.Time
+	var due time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -113,14 +127,34 @@ func (s *Syncer) Watch(ctx context.Context, subscribe func() (<-chan events.Mess
 			if !ok {
 				return
 			}
-			if (m.Type == "monitors" || m.Type == "status") && debounce == nil {
-				debounce = time.After(5 * time.Second)
+			var wait time.Duration
+			switch m.Type {
+			case "monitors":
+				wait = debounce
+			case "status":
+				wait = s.statusWait()
+			default:
+				continue
 			}
-		case <-debounce:
-			debounce = nil
+			// One timer: the earlier trigger wins.
+			if at := s.now().Add(wait); timer == nil || at.Before(due) {
+				timer, due = s.after(wait), at
+			}
+		case <-timer:
+			timer = nil
 			s.Trigger()
 		}
 	}
+}
+
+// statusWait is how long a status change waits before it is uploaded.
+func (s *Syncer) statusWait() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.LastUploadAt == nil {
+		return debounce
+	}
+	return max(debounce, s.status.LastUploadAt.Add(s.statusEvery).Sub(s.now()))
 }
 
 // Status returns the sync's state.
@@ -167,10 +201,10 @@ func (s *Syncer) cycle(ctx context.Context) time.Duration {
 			return s.failed(err)
 		}
 	}
-	interval := time.Duration(conn.UploadIntervalSeconds) * time.Second
-	if interval <= 0 {
-		interval = defaultInterval
-	}
+	interval, statusEvery, _ := intervals(conn)
+	s.mu.Lock()
+	s.statusEvery = statusEvery
+	s.mu.Unlock()
 
 	full := s.now().Sub(s.lastFull) >= fullReconcileEvery
 	if err := s.reconcile(ctx, client, conn, full); err != nil {
@@ -249,7 +283,7 @@ func (s *Syncer) Disconnect(ctx context.Context, conn *connect.Connection) error
 			s.Log.Warn("cloud sync: resetting", "err", err)
 		}
 		s.mu.Lock()
-		s.status, s.lastSent, s.lastFull = Status{}, map[int64]sent{}, time.Time{}
+		s.status, s.lastSent, s.lastFull, s.statusEvery = Status{}, map[int64]sent{}, time.Time{}, 0
 		s.mu.Unlock()
 	}()
 	client := s.Client()
@@ -319,6 +353,7 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 	}
 
 	conn.LocationUUID, conn.UploadIntervalSeconds, conn.HeartbeatUUID = loc.UUID, interval, hb.UUID
+	conn.StatusChangeIntervalSeconds, conn.SampleIntervalSeconds = loc.StatusChangeIntervalSeconds, loc.SampleIntervalSeconds
 	if err := s.Store.SaveUptimyConnection(ctx, *conn); err != nil {
 		return err
 	}
@@ -514,7 +549,7 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	if err != nil {
 		return false, err
 	}
-	interval := time.Duration(conn.UploadIntervalSeconds) * time.Second
+	_, _, sample := intervals(conn)
 	now := s.now()
 
 	up := connect.Upload{LocationUUID: conn.LocationUUID, Healthchecks: []connect.UploadHealthcheck{}, Heartbeats: []connect.UploadHeartbeat{}}
@@ -553,7 +588,7 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 			return false, err
 		}
 		prev, seen := last(r.MonitorID)
-		if seen && prev.status == status && r.Time.Sub(prev.at) < interval {
+		if seen && prev.status == status && r.Time.Sub(prev.at) < sample {
 			continue // thinned: nothing changed and the last one is recent
 		}
 		latency := int(r.LatencyMS)
@@ -631,7 +666,46 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 		s.forgetLocation(ctx, conn)
 		return false, nil
 	}
+	statusChanged := changed(&conn.StatusChangeIntervalSeconds, res.StatusChangeIntervalSeconds)
+	if sampleChanged := changed(&conn.SampleIntervalSeconds, res.SampleIntervalSeconds); statusChanged || sampleChanged {
+		s.Log.Info("cloud sync: intervals changed", "status_change_s", conn.StatusChangeIntervalSeconds, "sample_s", conn.SampleIntervalSeconds)
+		if err := s.Store.UpdateUptimyConnection(ctx, *conn); err != nil {
+			return false, err
+		}
+		_, statusEvery, _ := intervals(conn)
+		s.mu.Lock()
+		s.statusEvery = statusEvery
+		s.mu.Unlock()
+	}
 	return more, nil
+}
+
+// changed sets *v to a value Cloud sent (0: none) and reports whether it differed.
+func changed(v *int, got int) bool {
+	if got <= 0 || got == *v {
+		return false
+	}
+	*v = got
+	return true
+}
+
+// intervals are the connection's upload, status change and sample
+// intervals. An older Cloud sends only the upload interval: status changes
+// then wait for it too.
+func intervals(conn *connect.Connection) (upload, statusChange, sample time.Duration) {
+	upload = time.Duration(conn.UploadIntervalSeconds) * time.Second
+	if upload <= 0 {
+		upload = defaultInterval
+	}
+	statusChange = time.Duration(conn.StatusChangeIntervalSeconds) * time.Second
+	if statusChange <= 0 {
+		statusChange = upload
+	}
+	sample = time.Duration(conn.SampleIntervalSeconds) * time.Second
+	if sample <= 0 {
+		sample = defaultSampleInterval
+	}
+	return upload, statusChange, sample
 }
 
 // healthcheckStatus is the status the agent showed after a result, in
