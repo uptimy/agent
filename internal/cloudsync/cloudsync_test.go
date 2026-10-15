@@ -403,6 +403,28 @@ func TestUploadResponseUpdatesIntervals(t *testing.T) {
 	}
 }
 
+// A cycle works on the connection it loaded; saving what it changed must
+// keep a setting changed in the meantime, such as pausing alerts.
+func TestUpdateConnectionKeepsNewerSettings(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.s.cycle(ctx)
+	stale, _ := e.st.UptimyConnection(ctx)
+
+	paused, _ := e.st.UptimyConnection(ctx)
+	paused.Paused = true
+	if err := e.st.UpdateUptimyConnection(ctx, *paused); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.updateConnection(ctx, stale, func(c *connect.Connection) { c.SampleIntervalSeconds = 900 }); err != nil {
+		t.Fatal(err)
+	}
+	conn, _ := e.st.UptimyConnection(ctx)
+	if !conn.Paused || conn.SampleIntervalSeconds != 900 || stale.SampleIntervalSeconds != 900 {
+		t.Fatalf("stored %+v, cycle's copy %+v", conn, stale)
+	}
+}
+
 // An older Cloud sends only the upload interval.
 func TestIntervalDefaults(t *testing.T) {
 	upload, statusChange, sample := intervals(&connect.Connection{UploadIntervalSeconds: 60})

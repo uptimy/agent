@@ -254,13 +254,25 @@ func (s *Syncer) failed(err error) time.Duration {
 // forgetLocation makes the next cycle register the location again: Cloud
 // has none for this key (it was disconnected there, or set up anew).
 func (s *Syncer) forgetLocation(ctx context.Context, conn *connect.Connection) {
-	conn.LocationUUID = ""
-	if err := s.Store.UpdateUptimyConnection(ctx, *conn); err != nil {
+	if err := s.updateConnection(ctx, conn, func(c *connect.Connection) { c.LocationUUID = "" }); err != nil {
 		s.Log.Warn("cloud sync: saving the connection", "err", err)
 	}
 	if err := s.Store.ResetCloudSync(ctx); err != nil {
 		s.Log.Warn("cloud sync: resetting", "err", err)
 	}
+}
+
+// updateConnection applies change to conn and to the stored connection,
+// loaded afresh so a setting changed in the meantime (pause, maintenance)
+// isn't overwritten with this cycle's copy.
+func (s *Syncer) updateConnection(ctx context.Context, conn *connect.Connection, change func(*connect.Connection)) error {
+	change(conn)
+	stored, err := s.Store.UptimyConnection(ctx)
+	if err != nil || stored == nil {
+		return err // nil: disconnected meanwhile, nothing to update
+	}
+	change(stored)
+	return s.Store.UpdateUptimyConnection(ctx, *stored)
 }
 
 // SetUp sets a new connection up right away (Connect to Uptimy Cloud), so
@@ -352,9 +364,19 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 		}
 	}
 
-	conn.LocationUUID, conn.UploadIntervalSeconds, conn.HeartbeatUUID = loc.UUID, interval, hb.UUID
-	conn.StatusChangeIntervalSeconds, conn.SampleIntervalSeconds = loc.StatusChangeIntervalSeconds, loc.SampleIntervalSeconds
-	if err := s.Store.SaveUptimyConnection(ctx, *conn); err != nil {
+	setUp := func(c *connect.Connection) {
+		c.LocationUUID, c.UploadIntervalSeconds, c.HeartbeatUUID = loc.UUID, interval, hb.UUID
+		c.StatusChangeIntervalSeconds, c.SampleIntervalSeconds = loc.StatusChangeIntervalSeconds, loc.SampleIntervalSeconds
+	}
+	if stored, err := s.Store.UptimyConnection(ctx); err != nil {
+		return err
+	} else if stored == nil || stored.APIKey != conn.APIKey {
+		// Connecting (or reconnecting with a new key): conn is the new connection.
+		setUp(conn)
+		if err := s.Store.SaveUptimyConnection(ctx, *conn); err != nil {
+			return err
+		}
+	} else if err := s.updateConnection(ctx, conn, setUp); err != nil {
 		return err
 	}
 	if _, _, ok, err := s.Store.SyncCursors(ctx); err != nil {
@@ -666,10 +688,14 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 		s.forgetLocation(ctx, conn)
 		return false, nil
 	}
-	statusChanged := changed(&conn.StatusChangeIntervalSeconds, res.StatusChangeIntervalSeconds)
-	if sampleChanged := changed(&conn.SampleIntervalSeconds, res.SampleIntervalSeconds); statusChanged || sampleChanged {
-		s.Log.Info("cloud sync: intervals changed", "status_change_s", conn.StatusChangeIntervalSeconds, "sample_s", conn.SampleIntervalSeconds)
-		if err := s.Store.UpdateUptimyConnection(ctx, *conn); err != nil {
+	newStatusChange, newSample := conn.StatusChangeIntervalSeconds, conn.SampleIntervalSeconds
+	statusChanged := changed(&newStatusChange, res.StatusChangeIntervalSeconds)
+	if sampleChanged := changed(&newSample, res.SampleIntervalSeconds); statusChanged || sampleChanged {
+		s.Log.Info("cloud sync: intervals changed", "status_change_s", newStatusChange, "sample_s", newSample)
+		err := s.updateConnection(ctx, conn, func(c *connect.Connection) {
+			c.StatusChangeIntervalSeconds, c.SampleIntervalSeconds = newStatusChange, newSample
+		})
+		if err != nil {
 			return false, err
 		}
 		_, statusEvery, _ := intervals(conn)
