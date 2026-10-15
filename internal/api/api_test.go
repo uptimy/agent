@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/checks"
+	"github.com/uptimy/agent/internal/cloudsync"
 	"github.com/uptimy/agent/internal/config"
 	"github.com/uptimy/agent/internal/connect"
 	"github.com/uptimy/agent/internal/delivery"
@@ -112,10 +113,16 @@ func newTestServerWithConfig(t *testing.T, cfg config.Config) (*client, *store.S
 	if err := sched.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
+	watchdog := connect.NewWatchdog("", false, time.Minute, "test", sched.Counts, log)
+	syncer := cloudsync.New(st, func() *connect.Client {
+		c := connect.NewClient(cfg.UptimyAPIURL, cfg.UptimyHeartbeatsURL)
+		c.IngestURL = cfg.UptimyAPIURL // the fake Uptimy serves ingest too
+		return c
+	}, cfg.AgentName, "test", log, func() { watchdog.SetURL("") })
 	srv := &Server{
 		Config: cfg, Version: "test",
 		Store: st, Scheduler: sched, Sender: sender, Alerts: alerts, Hub: hub, Log: log,
-		Watchdog: connect.NewWatchdog("", false, time.Minute, "test", sched.Counts, log),
+		Watchdog: watchdog, Sync: syncer,
 	}
 	ts := httptest.NewServer(srv.Handler(http.NotFoundHandler()))
 	t.Cleanup(ts.Close)

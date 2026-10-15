@@ -29,6 +29,9 @@ type fakeUptimy struct {
 	deleted    []string
 	checkIns   int
 	down       bool
+	// Cloud sync (upti.my-api agent routes, upti.my-ingest).
+	locationDeleted bool
+	uploads         int
 }
 
 // fakeCode is a one-time code the consent page would issue for a key.
@@ -50,15 +53,17 @@ func (f *fakeUptimy) approve(key string) string {
 
 // fakeHeartbeat is the part of a heartbeat monitor the agent reads and writes.
 type fakeHeartbeat struct {
-	interval, grace int
-	paused          bool
-	lastPut         map[string]any
+	interval, grace   int
+	paused            bool
+	lastPut           map[string]any
+	clientRef, source string
 }
 
 func (h *fakeHeartbeat) json(uuid string) map[string]any {
 	m := map[string]any{
 		"uuid": uuid, "name": "Uptimy Agent", "intervalSeconds": h.interval, "graceSeconds": h.grace,
 		"failureThreshold": 1, "recoveryThreshold": 1, "credential": map[string]any{"publicId": "pub-" + uuid},
+		"clientRef": h.clientRef, "source": h.source,
 	}
 	if h.paused {
 		m["pausedAt"] = "2026-09-30T12:00:00Z"
@@ -112,6 +117,23 @@ func (f *fakeUptimy) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.URL.Path == "/v1/api/agent/location" && r.Method == http.MethodPut:
+		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"locationUuid": "loc-1", "uploadIntervalSeconds": 60, "withinPlan": true}})
+	case r.URL.Path == "/v1/api/agent/location" && r.Method == http.MethodDelete:
+		f.locationDeleted = true
+		w.WriteHeader(http.StatusNoContent)
+	case r.URL.Path == "/v1/api/agent/healthchecks" && r.Method == http.MethodGet:
+		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"results": []any{}}})
+	case r.URL.Path == "/v1/agent/results" && r.Method == http.MethodPost:
+		f.uploads++
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"accepted": 0, "uploadIntervalSeconds": 60}})
+	case r.URL.Path == "/v1/api/heartbeat-monitors/" && r.Method == http.MethodGet:
+		var list []map[string]any
+		for uuid, hb := range f.monitors {
+			list = append(list, hb.json(uuid))
+		}
+		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"results": list}})
 	case r.URL.Path == "/v1/api/api-key" && r.Method == http.MethodGet:
 		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 			"uuid": "uuid-" + key, "scope": scope, "workspace": map[string]any{"id": 1, "name": "Acme"},
@@ -122,6 +144,7 @@ func (f *fakeUptimy) serve(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/v1/api/heartbeat-monitors/" && r.Method == http.MethodPost:
 		var body struct {
 			ClientRef       string `json:"clientRef"`
+			Source          string `json:"source"`
 			IntervalSeconds int    `json:"intervalSeconds"`
 			GraceSeconds    int    `json:"graceSeconds"`
 		}
@@ -131,7 +154,10 @@ func (f *fakeUptimy) serve(w http.ResponseWriter, r *http.Request) {
 		if !exists {
 			uuid, status = "hb-"+body.ClientRef, http.StatusCreated
 			f.heartbeats[body.ClientRef] = uuid
-			f.monitors[uuid] = &fakeHeartbeat{interval: body.IntervalSeconds, grace: body.GraceSeconds}
+			f.monitors[uuid] = &fakeHeartbeat{interval: body.IntervalSeconds, grace: body.GraceSeconds, clientRef: body.ClientRef}
+		}
+		if body.Source != "" {
+			f.monitors[uuid].source = body.Source // applied to an existing one too, like the real service
 		}
 		w.WriteHeader(status)
 		json.NewEncoder(w).Encode(map[string]any{"data": f.monitors[uuid].json(uuid)})
@@ -153,7 +179,9 @@ func (f *fakeUptimy) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(map[string]any{"data": hb.json(uuid)})
 	case strings.HasPrefix(r.URL.Path, "/v1/api/heartbeat-monitors/") && r.Method == http.MethodDelete:
-		f.deleted = append(f.deleted, strings.TrimPrefix(r.URL.Path, "/v1/api/heartbeat-monitors/"))
+		uuid := strings.TrimPrefix(r.URL.Path, "/v1/api/heartbeat-monitors/")
+		f.deleted = append(f.deleted, uuid)
+		delete(f.monitors, uuid)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(http.StatusNotFound)
@@ -222,7 +250,9 @@ func TestConnectToUptimy(t *testing.T) {
 	// The real flow.
 	state = start(t, c, uptimy)
 	code, body := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "code": uptimy.approve("upt_agent1")})
-	if code != 200 || body["enabled"] != true || body["last_ok"] != true {
+	// The Cloud sync takes over: the agent is a location, and its uploads
+	// check it in (the old ping URL is off).
+	if sync, _ := body["sync"].(map[string]any); code != 200 || sync == nil || sync["active"] != true || sync["location_uuid"] != "loc-1" || body["enabled"] != false {
 		t.Fatalf("finish: %d %v", code, body)
 	}
 	if acct, _ := body["account"].(map[string]any); acct == nil || acct["workspace_name"] != "Acme" || acct["connected_by"] != "admin" {
@@ -231,12 +261,15 @@ func TestConnectToUptimy(t *testing.T) {
 	if code, _ := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "code": uptimy.approve("upt_agent1")}); code != 400 {
 		t.Fatalf("state reused: %d", code)
 	}
-	if uptimy.checkIns != 1 || len(uptimy.heartbeats) != 1 {
-		t.Fatalf("want 1 check-in and 1 heartbeat, got %d and %d", uptimy.checkIns, len(uptimy.heartbeats))
+	if len(uptimy.heartbeats) != 1 {
+		t.Fatalf("want 1 heartbeat, got %d", len(uptimy.heartbeats))
 	}
 	var firstHeartbeat string
 	for _, uuid := range uptimy.heartbeats {
 		firstHeartbeat = uuid
+	}
+	if hb := uptimy.monitors[firstHeartbeat]; hb.source != "agent_liveness" || hb.interval != 60 {
+		t.Fatalf("check-in heartbeat: %+v", hb)
 	}
 
 	// Viewers see the connection but can't change it, and never get the URL.
@@ -261,13 +294,13 @@ func TestConnectToUptimy(t *testing.T) {
 		t.Fatalf("reconnect should reuse the heartbeat and revoke the old key: %v %v", uptimy.heartbeats, uptimy.keys)
 	}
 
-	// Disconnect deletes the heartbeat and revokes the key.
+	// Disconnect deletes the location, the heartbeat and the key.
 	code, body = c.do("DELETE", "/api/uptimy/heartbeat", nil)
 	if code != 200 || body["enabled"] != false || body["account"] != nil || body["warning"] != nil {
 		t.Fatalf("disconnect: %d %v", code, body)
 	}
-	if len(uptimy.deleted) != 1 || uptimy.deleted[0] != firstHeartbeat || uptimy.keys["upt_agent2"] != "" {
-		t.Fatalf("disconnect should delete the heartbeat and revoke the key: %v %v", uptimy.deleted, uptimy.keys)
+	if !uptimy.locationDeleted || len(uptimy.deleted) != 1 || uptimy.deleted[0] != firstHeartbeat || uptimy.keys["upt_agent2"] != "" {
+		t.Fatalf("disconnect should delete the location and heartbeat and revoke the key: %v %v %v", uptimy.locationDeleted, uptimy.deleted, uptimy.keys)
 	}
 }
 
@@ -291,7 +324,7 @@ func TestDisconnectWhenUptimyIsDown(t *testing.T) {
 	if code != 200 || body["enabled"] != false {
 		t.Fatalf("should still disconnect locally: %d %v", code, body)
 	}
-	if w, _ := body["warning"].(string); !strings.Contains(w, "Delete it there") {
+	if w, _ := body["warning"].(string); !strings.Contains(w, "Settings → Agents") {
 		t.Fatalf("expected a warning to clean up in Uptimy, got %v", body["warning"])
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/uptimy/agent/internal/cloudsync"
 	"github.com/uptimy/agent/internal/config"
 	"github.com/uptimy/agent/internal/connect"
 	"github.com/uptimy/agent/internal/delivery"
@@ -24,15 +25,17 @@ import (
 
 // Server holds the API's dependencies.
 type Server struct {
-	Config        config.Config
-	Version       string
-	Store         *store.Store
-	Scheduler     *scheduler.Scheduler
-	Sender        *notify.Sender
-	Alerts        *delivery.Dispatcher
-	Hub           *events.Hub
-	Log           *slog.Logger
-	Watchdog      *connect.Watchdog
+	Config    config.Config
+	Version   string
+	Store     *store.Store
+	Scheduler *scheduler.Scheduler
+	Sender    *notify.Sender
+	Alerts    *delivery.Dispatcher
+	Hub       *events.Hub
+	Log       *slog.Logger
+	Watchdog  *connect.Watchdog
+	// Sync is the Uptimy Cloud sync for "Connect to Uptimy Cloud".
+	Sync          *cloudsync.Syncer
 	KubeAvailable bool
 	// Discovery is nil unless Kubernetes discovery runs.
 	Discovery *discovery.Discoverer

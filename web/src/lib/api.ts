@@ -412,8 +412,23 @@ export interface UptimyCheckIn {
   last_ping_at: string | null;
   last_ok: boolean;
   last_error?: string;
-  // Paused in Uptimy: the agent doesn't check in and nobody is alerted.
+  // Paused in Uptimy: nobody is alerted when the agent stops checking in.
   paused: boolean;
+  // Uptimy Cloud sync, for a "Connect to Uptimy Cloud" connection: its
+  // uploads are the agent's check-in.
+  sync?: CloudSync;
+}
+
+export interface CloudSync {
+  active: boolean;
+  location_uuid?: string;
+  upload_interval_seconds?: number;
+  last_upload_at?: string;
+  last_error?: string;
+  // The workspace's plan has no room for this agent: Cloud doesn't take its results.
+  over_plan?: boolean;
+  healthchecks: number;
+  heartbeats: number;
 }
 
 // When Uptimy alerts about a silent agent. Only available for a

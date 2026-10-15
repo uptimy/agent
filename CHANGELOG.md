@@ -5,6 +5,7 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 ## [Unreleased]
 
 ### Added
+- **Connect to Uptimy Cloud.** Settings → Uptimy Cloud adds the agent to your Uptimy workspace as a private location. Its healthchecks and heartbeats show up there read-only, with their status, uptime and history, for status pages, SLA reports, alert rules, workflows and on-call; change them in the agent and Cloud follows within seconds. The agent still decides every status and alerts on its own; Cloud records what it decided. Each upload checks the agent in, so Uptimy alerts from outside when it goes quiet. Results queue up while Uptimy can't be reached. Passwords in targets are masked before anything is sent. `UPTIMY_INGEST_URL` points elsewhere for development.
 - **Alerts are retried until they're delivered.** Each alert is saved with the status change that caused it and sent to every channel on its own: a channel that's down or answers with an error is retried with backoff for up to an hour, while one that refuses it (a deleted webhook, a revoked token) isn't retried. Alerts about a monitor reach a channel in order, so a recovery never arrives before its outage. Alerts waiting to go out survive restarts and crashes.
 - **See whether an alert arrived.** Each event on a monitor's page shows how its alert went on every channel (sent, retrying, refused, given up, or not sent and why) with **Retry**, and **Notifications** shows each channel's last alert and recent failures. New metrics: `uptimy_agent_alert_deliveries_total` and `uptimy_agent_alert_deliveries_pending`.
 - **Recovery threshold:** `recovery_threshold` (in the form, YAML and the `upti.my/recovery-threshold` annotation) is how many good checks in a row bring a down healthcheck back up, so a flapping target doesn't send down/up pairs. `upti.my/failure-threshold` sets the failure threshold of discovered monitors.
@@ -14,6 +15,12 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 - `TRUSTED_PROXIES` sets which proxies' `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed. By default, loopback and private networks.
 - Webhook alerts carry an `id` that's the same on every attempt, and reminders and acknowledgements a `type`.
 - The Uptime Kuma importer points out monitors that re-sent their alerts while down, so you can turn on reminders.
+
+### Changed
+- **Watch the watcher** is now part of **Connect to Uptimy Cloud**: an existing connection is moved over on the first start, keeping its heartbeat and history. The agent checks in with every upload (your plan's check interval) instead of every minute, and Uptimy alerts after two missed uploads unless you chose a longer delay. A pasted heartbeat URL or `UPTIMY_HEARTBEAT_URL` keeps working as before.
+
+### Removed
+- The **Uptimy** alert channel. Connect to Uptimy Cloud instead: agent monitors become real Uptimy monitors, whose outages open incidents there. Existing Uptimy channels are deleted on upgrade (Uptimy stopped accepting them on 2026-10-14).
 
 ### Fixed
 - A down alert held for a maintenance window is no longer forgotten when the agent restarts during the window.

@@ -49,6 +49,8 @@ type Config struct {
 	UptimyAppURL        string
 	UptimyAPIURL        string
 	UptimyHeartbeatsURL string
+	// UptimyIngestURL receives Cloud sync uploads.
+	UptimyIngestURL string
 
 	// AgentName labels this agent in Uptimy (consent screen, heartbeat name).
 	// Defaults to the hostname, which in Kubernetes is a random pod name.
@@ -72,6 +74,7 @@ func Load() (Config, error) {
 		UptimyAppURL:        env("UPTIMY_APP_URL", "https://app.upti.my"),
 		UptimyAPIURL:        env("UPTIMY_API_URL", "https://api.upti.my"),
 		UptimyHeartbeatsURL: env("UPTIMY_HEARTBEATS_URL", "https://heartbeats.upti.my"),
+		UptimyIngestURL:     env("UPTIMY_INGEST_URL", "https://ingest.upti.my"),
 		AgentName:           os.Getenv("AGENT_NAME"),
 	}
 	if c.AgentName == "" {

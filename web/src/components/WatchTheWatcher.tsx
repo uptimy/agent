@@ -32,11 +32,12 @@ export function WatchTheWatcherCard() {
     <Card id="watch-the-watcher">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <UptimyMark className="h-3" /> Watch the watcher
+          <UptimyMark className="h-3" /> Uptimy Cloud
         </CardTitle>
         <CardDescription>
-          If this agent, its server or the whole cluster goes down, nothing is left to alert you. Connect a free Uptimy
-          heartbeat and Uptimy will alert you from outside when the agent stops checking in.
+          Connect this agent to your Uptimy workspace. Uptimy alerts you from outside when the agent, its server or the
+          cluster goes down, and its monitors show up there with their uptime, reports, status pages and incidents. The
+          agent keeps working on its own either way.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -47,7 +48,7 @@ export function WatchTheWatcherCard() {
           </p>
         )}
         {hb.data &&
-          (hb.data.enabled ? (
+          (hb.data.enabled || hb.data.account ? (
             <Connected status={hb.data} canEdit={canEdit} onWarning={setWarning} />
           ) : canEdit ? (
             <ConnectForm status={hb.data} />
@@ -74,12 +75,13 @@ function ConnectForm({ status }: { status: UptimyCheckIn }) {
         <div className="min-w-0 flex-1 text-sm">
           <div className="font-medium">Connect with your Uptimy account</div>
           <p className="mt-0.5 text-muted-foreground">
-            Sign in, pick a workspace, and the agent sets up its own heartbeat. Free, and takes a few seconds.
+            Sign in and pick a workspace: the agent adds itself there with its monitors, read-only. Free, and takes a
+            few seconds.
           </p>
         </div>
         <Button onClick={() => start.mutate()} disabled={start.isPending} className="shrink-0">
           <UptimyMark className="h-3 brightness-0 invert dark:brightness-100 dark:invert-0" />
-          {start.isPending ? "Opening Uptimy…" : "Connect to Uptimy"}
+          {start.isPending ? "Opening Uptimy…" : "Connect to Uptimy Cloud"}
         </Button>
       </div>
       <ErrorNote error={start.error} />
@@ -191,7 +193,8 @@ function Connected({
     mutationFn: api.testUptimyCheckIn,
     onSuccess: (s) => {
       update(s);
-      if (s.last_ok) toast.success("Check-in sent", "Uptimy received it.");
+      if (s.sync) toast.success("Uploading now");
+      else if (s.last_ok) toast.success("Check-in sent", "Uptimy received it.");
     },
   });
   const disconnect = useMutation({
@@ -203,11 +206,15 @@ function Connected({
     },
   });
   const account = status.account;
+  const sync = account ? status.sync : undefined;
   const managed = !!account && !status.managed_by_env;
   const settings = useUptimyAlerting(managed);
   const inWindow = !!settings.data?.maintenance_until;
-  const waiting = !status.last_ping_at && !status.paused;
-  const healthy = !waiting && status.last_ok;
+  // With the Cloud sync, an upload is the check-in.
+  const lastCheckIn = sync ? sync.last_upload_at : status.last_ping_at;
+  const lastError = sync ? sync.last_error : status.last_error;
+  const waiting = !lastCheckIn && !status.paused && !lastError;
+  const healthy = !waiting && (sync ? !sync.last_error : status.last_ok);
 
   return (
     <div className="flex flex-col gap-4">
@@ -226,27 +233,44 @@ function Connected({
         />
         <div className="min-w-0 flex-1 text-sm">
           <div className="font-medium">
-            {status.paused
-              ? "Alerts are paused"
-              : waiting
-                ? "Waiting for the first check-in"
-                : !healthy
-                  ? "Check-ins are failing"
-                  : account
-                    ? `Connected to ${account.workspace_name}`
-                    : "Connected to Uptimy"}
+            {sync?.over_plan
+              ? "Not syncing: over your plan's connected agents"
+              : status.paused
+                ? "Alerts are paused"
+                : waiting
+                  ? sync
+                    ? "Setting up the sync…"
+                    : "Waiting for the first check-in"
+                  : !healthy
+                    ? sync
+                      ? "Uploads are failing"
+                      : "Check-ins are failing"
+                    : account
+                      ? `Connected to ${account.workspace_name}`
+                      : "Connected to Uptimy"}
           </div>
           <div className="mt-0.5 text-muted-foreground">
-            {status.paused && "The agent doesn't check in while alerts are paused."}
+            {status.paused && !sync && "The agent doesn't check in while alerts are paused."}
+            {status.paused && sync && "Uptimy doesn't alert when the agent goes silent while alerts are paused."}
             {!status.paused &&
               healthy &&
-              `Checking in every ${formatInterval(status.interval_seconds)} · last check-in ${timeAgo(status.last_ping_at!)}`}
-            {!status.paused && !healthy && !waiting && status.last_error}
+              !sync &&
+              `Checking in every ${formatInterval(status.interval_seconds)} · last check-in ${timeAgo(lastCheckIn!)}`}
+            {healthy &&
+              sync &&
+              `Uploading every ${formatInterval(sync.upload_interval_seconds ?? 300)} · last upload ${timeAgo(lastCheckIn!)}`}
+            {!healthy && !waiting && lastError}
           </div>
+          {sync?.active && (
+            <div className="mt-1 text-muted-foreground">
+              {sync.healthchecks} healthcheck{sync.healthchecks === 1 ? "" : "s"} and {sync.heartbeats} heartbeat
+              {sync.heartbeats === 1 ? "" : "s"} in Uptimy, read-only there. Change them here.
+            </div>
+          )}
           {account ? (
             <div className="mt-2 text-xs text-muted-foreground">
-              Connected by {account.connected_by} {timeAgo(account.connected_at)}. The heartbeat and its agent key are
-              managed for you.
+              Connected by {account.connected_by} {timeAgo(account.connected_at)}. The agent&apos;s key and its check-in
+              are managed for you.
             </div>
           ) : (
             status.url && (
@@ -260,8 +284,8 @@ function Connected({
       {managed && <UptimyAlertingSettings canEdit={canEdit} />}
       {!managed && !status.managed_by_env && (
         <p className="text-xs text-muted-foreground">
-          To change when Uptimy alerts, edit this heartbeat in Uptimy, or connect with &quot;Connect to Uptimy&quot; to
-          manage it here.
+          To change when Uptimy alerts, edit this heartbeat in Uptimy, or connect with &quot;Connect to Uptimy
+          Cloud&quot; to manage it here.
         </p>
       )}
       {status.managed_by_env ? (
@@ -272,7 +296,7 @@ function Connected({
       {canEdit && (
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={() => test.mutate()} disabled={test.isPending || status.paused}>
-            <Send /> {test.isPending ? "Sending…" : "Send test check-in"}
+            <Send /> {test.isPending ? "Sending…" : sync ? "Upload now" : "Send test check-in"}
           </Button>
           {!status.managed_by_env && (
             <Button
@@ -285,9 +309,10 @@ function Connected({
                   icon: Unplug,
                   message: account ? (
                     <>
-                      This deletes the agent&apos;s heartbeat in{" "}
-                      <strong className="text-foreground">{account.workspace_name}</strong> and revokes its key. You can
-                      connect again at any time.
+                      This removes the agent, its monitors and its check-in from{" "}
+                      <strong className="text-foreground">{account.workspace_name}</strong> and revokes its key. Reports
+                      already made keep their numbers, and the agent keeps working here. You can connect again at any
+                      time.
                     </>
                   ) : (
                     "The agent stops sending check-ins to Uptimy. You can connect again at any time."
@@ -322,7 +347,7 @@ function readDismissed() {
 export function WatchTheWatcherNudge() {
   const hb = useUptimyCheckIn();
   const [dismissed, setDismissed] = useState(readDismissed);
-  if (!hb.data || hb.data.enabled || dismissed) return null;
+  if (!hb.data || hb.data.enabled || hb.data.account || dismissed) return null;
 
   return (
     <Card className="relative p-5">

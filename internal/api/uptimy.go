@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/uptimy/agent/internal/cloudsync"
 	"github.com/uptimy/agent/internal/connect"
 )
 
@@ -29,6 +31,8 @@ func randomToken(n int) string {
 
 type heartbeatStatusResponse struct {
 	connect.Status
+	// Sync is the Uptimy Cloud sync, for account connections.
+	Sync *cloudsync.Status `json:"sync,omitempty"`
 	// Account is set when connected through "Connect to Uptimy".
 	Account *struct {
 		WorkspaceName string    `json:"workspace_name"`
@@ -54,6 +58,10 @@ func (s *Server) heartbeatStatusFor(r *http.Request) (heartbeatStatusResponse, e
 		ConnectedAt   time.Time `json:"connected_at"`
 		ConnectedBy   string    `json:"connected_by"`
 	}{conn.WorkspaceName, conn.ConnectedAt, conn.ConnectedBy}
+	if s.Sync != nil {
+		st := s.Sync.Status()
+		resp.Sync = &st
+	}
 	return resp, nil
 }
 
@@ -239,47 +247,50 @@ func (s *Server) finishConnect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Uptimy returned a full-access key instead of an agent key; start again from Settings")
 		return
 	}
-	installID, err := s.Store.InstallID(r.Context())
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	hb, err := client.EnsureHeartbeat(ctx, key, "Uptimy Agent · "+s.Config.AgentName, installID)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "couldn't create the heartbeat in Uptimy: "+err.Error())
-		return
-	}
-	if err := s.Watchdog.Connect(ctx, hb.PingURL); err != nil {
-		writeError(w, http.StatusBadGateway, "the heartbeat was created but the first check-in failed: "+err.Error())
-		return
-	}
-
 	conn := connect.Connection{
 		APIKey:        key,
 		KeyUUID:       who.UUID,
 		WorkspaceName: who.Workspace.Name,
-		HeartbeatUUID: hb.UUID,
 		ConnectedAt:   time.Now().UTC(),
 		ConnectedBy:   user.Username,
 	}
-	// Replacing an earlier connection: revoke its key (the heartbeat was
-	// reclaimed above, so it must not be deleted), and keep a maintenance
-	// window running on that same heartbeat so it still ends on time.
-	if old, err := s.Store.UptimyConnection(r.Context()); err == nil && old != nil {
+	old, err := s.Store.UptimyConnection(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	// The sync registers the agent's location in Cloud, sets up its check-in
+	// heartbeat (reclaiming the one an earlier connection made) and saves the
+	// connection. Its uploads are the check-in from now on.
+	if err := s.Sync.SetUp(ctx, &conn); err != nil {
+		// Don't leave an unused key behind in Uptimy.
+		if rerr := client.RevokeKey(ctx, key); rerr != nil {
+			s.Log.Warn("couldn't revoke the new Uptimy agent key", "err", rerr)
+		}
+		if errors.Is(err, connect.ErrAgentLimit) {
+			writeError(w, http.StatusForbidden, "Your Uptimy plan's connected agents are all in use. Upgrade, or disconnect another agent under Settings → Agents in Uptimy, then connect again.")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "couldn't set the agent up in Uptimy: "+err.Error())
+		return
+	}
+	// Replacing an earlier connection: revoke its key, and keep a maintenance
+	// window running on the same heartbeat so it still ends on time.
+	if old != nil {
 		if old.KeyUUID != who.UUID {
 			if err := client.RevokeKey(ctx, old.APIKey); err != nil {
 				s.Log.Warn("couldn't revoke the previous Uptimy agent key", "err", err)
 			}
 		}
-		if old.HeartbeatUUID == hb.UUID {
+		if old.HeartbeatUUID == conn.HeartbeatUUID && old.MaintenanceUntil != nil {
 			conn.MaintenanceUntil, conn.NormalGraceSeconds = old.MaintenanceUntil, old.NormalGraceSeconds
+			if err := s.Store.UpdateUptimyConnection(r.Context(), conn); err != nil {
+				s.internalError(w, r, err)
+				return
+			}
 		}
 	}
-	if err := s.Store.SaveUptimyConnection(r.Context(), conn, hb.PingURL); err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	s.Log.Info("connected to Uptimy", "workspace", who.Workspace.Name, "reused_heartbeat", hb.Existing)
+	s.Log.Info("connected to Uptimy Cloud", "workspace", who.Workspace.Name, "location", conn.LocationUUID)
 	s.writeHeartbeatStatus(w, r)
 }
 
@@ -297,9 +308,14 @@ func (s *Server) disconnectHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if conn != nil {
-		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		client := connect.NewClient(s.Config.UptimyAPIURL, s.Config.UptimyHeartbeatsURL)
-		if err := client.DeleteHeartbeat(ctx, conn.APIKey, conn.HeartbeatUUID); err != nil {
+		if conn.LocationUUID != "" {
+			// Cloud sync: the location, mirrored monitors and check-in.
+			if err := s.Sync.Disconnect(ctx, conn); err != nil {
+				warning = "Disconnected, but " + err.Error() + "."
+			}
+		} else if err := client.DeleteHeartbeat(ctx, conn.APIKey, conn.HeartbeatUUID); err != nil {
 			warning = "Disconnected, but the heartbeat couldn't be removed from Uptimy (" + err.Error() + "). Delete it there so it doesn't alert."
 		}
 		if err := client.RevokeKey(ctx, conn.APIKey); err != nil && warning == "" {
@@ -324,6 +340,12 @@ func (s *Server) disconnectHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) testHeartbeat(w http.ResponseWriter, r *http.Request) {
+	// With the Cloud sync, an upload is the check-in: run one now.
+	if conn, err := s.Store.UptimyConnection(r.Context()); err == nil && conn != nil && conn.LocationUUID != "" {
+		s.Sync.Trigger()
+		s.writeHeartbeatStatus(w, r)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	_ = s.Watchdog.PingNow(ctx) // the outcome is recorded in the status returned below

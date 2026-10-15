@@ -19,7 +19,7 @@ import (
 // needs to undo: the normal grace during a maintenance window.
 
 // alertAfterChoices are the delays offered in the UI, in minutes.
-var alertAfterChoices = []int{2, 5, 15, 30}
+var alertAfterChoices = []int{2, 5, 10, 15, 30, 60}
 
 // maintenanceChoices are the maintenance windows offered in the UI, in minutes.
 var maintenanceChoices = []int{30, 60, 240}
@@ -37,6 +37,31 @@ type heartbeatSettingsResponse struct {
 	MaintenanceChoices      []int `json:"maintenance_choices"`
 }
 
+// checkInInterval is how often the agent checks in: every upload once the
+// Cloud sync is set up, otherwise the old one-minute ping.
+func checkInInterval(conn *connect.Connection) time.Duration {
+	if conn.LocationUUID != "" && conn.UploadIntervalSeconds > 0 {
+		return time.Duration(conn.UploadIntervalSeconds) * time.Second
+	}
+	return connect.CheckInInterval
+}
+
+// alertAfterChoicesFor offers only delays of at least two check-ins, so one
+// late upload never alerts.
+func alertAfterChoicesFor(conn *connect.Connection) []int {
+	minimum := int((2 * checkInInterval(conn)).Minutes())
+	var out []int
+	for _, m := range alertAfterChoices {
+		if m >= minimum {
+			out = append(out, m)
+		}
+	}
+	if len(out) == 0 {
+		out = []int{minimum}
+	}
+	return out
+}
+
 func (s *Server) uptimyClient() *connect.Client {
 	return connect.NewClient(s.Config.UptimyAPIURL, s.Config.UptimyHeartbeatsURL)
 }
@@ -45,6 +70,9 @@ func (s *Server) uptimyClient() *connect.Client {
 // made in Uptimy itself.
 func (s *Server) settingsResponse(ctx context.Context, conn *connect.Connection, hs connect.HeartbeatSettings) heartbeatSettingsResponse {
 	s.Watchdog.SetPaused(ctx, hs.Paused)
+	if conn.Paused && !hs.Paused && conn.LocationUUID != "" {
+		s.Sync.Trigger() // resumed: check in right away
+	}
 	if conn.Paused != hs.Paused {
 		conn.Paused = hs.Paused
 		if err := s.Store.UpdateUptimyConnection(ctx, *conn); err != nil {
@@ -55,7 +83,7 @@ func (s *Server) settingsResponse(ctx context.Context, conn *connect.Connection,
 		Available:          true,
 		AlertAfterSeconds:  int(hs.AlertAfter().Seconds()),
 		Paused:             hs.Paused,
-		AlertAfterChoices:  alertAfterChoices,
+		AlertAfterChoices:  alertAfterChoicesFor(conn),
 		MaintenanceChoices: maintenanceChoices,
 	}
 	if conn.MaintenanceUntil != nil {
@@ -123,11 +151,11 @@ func (s *Server) updateHeartbeatSettings(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusConflict, "end the maintenance window first")
 			return
 		}
-		if !slices.Contains(alertAfterChoices, *in.AlertAfterSeconds/60) || *in.AlertAfterSeconds%60 != 0 {
+		if !slices.Contains(alertAfterChoicesFor(conn), *in.AlertAfterSeconds/60) || *in.AlertAfterSeconds%60 != 0 {
 			writeError(w, http.StatusBadRequest, "unsupported delay")
 			return
 		}
-		g := connect.GraceFor(time.Duration(*in.AlertAfterSeconds) * time.Second)
+		g := connect.GraceFor(time.Duration(*in.AlertAfterSeconds)*time.Second, checkInInterval(conn))
 		grace = &g
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)

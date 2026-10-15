@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata" // heartbeat cron schedules need time zones, and minimal images lack the database
 
 	"github.com/uptimy/agent/internal/api"
 	"github.com/uptimy/agent/internal/checks"
+	"github.com/uptimy/agent/internal/cloudsync"
 	"github.com/uptimy/agent/internal/config"
 	"github.com/uptimy/agent/internal/connect"
 	"github.com/uptimy/agent/internal/delivery"
@@ -132,9 +134,21 @@ func run(log *slog.Logger) error {
 	}
 	go prune(ctx, st, cfg.RetentionDays, log)
 
+	// Uptimy Cloud sync, for "Connect to Uptimy Cloud" connections: its
+	// uploads are also the agent's check-in, so it turns the watchdog off
+	// once it has set the connection up.
+	syncer := cloudsync.New(st, func() *connect.Client {
+		c := connect.NewClient(cfg.UptimyAPIURL, cfg.UptimyHeartbeatsURL)
+		c.IngestURL = strings.TrimRight(cfg.UptimyIngestURL, "/")
+		return c
+	}, cfg.AgentName, version, log, func() { watchdog.SetURL("") })
+	go syncer.Run(ctx)
+	go syncer.Watch(ctx, hub.Subscribe)
+
 	srv := &api.Server{
 		Config: cfg, Version: version, Store: st, Scheduler: sched,
 		Sender: sender, Alerts: alerts, Hub: hub, Log: log, Watchdog: watchdog, KubeAvailable: kc != nil, Discovery: disc,
+		Sync: syncer,
 	}
 	srv.RestorePaused(ctx)
 	go watchdog.Run(ctx)

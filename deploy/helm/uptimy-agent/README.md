@@ -96,7 +96,7 @@ ingress:
 | `adminPassword` | `""` | Password for `admin`; empty prints a random one to the log |
 | `existingSecret` | `""` | Secret with key `ADMIN_PASSWORD` instead of `adminPassword` |
 | `agentName` | release name | How the agent is labeled in Uptimy |
-| `uptimy.heartbeatUrl` | `""` | Pin the Uptimy check-in URL (usually done with "Connect to Uptimy" in the UI) |
+| `uptimy.heartbeatUrl` | `""` | Pin an Uptimy check-in URL (usually you'd use "Connect to Uptimy Cloud" in the UI instead) |
 | `uptimy.existingSecret` | `""` | Secret with key `UPTIMY_HEARTBEAT_URL` |
 | `healthchecks` / `heartbeats` | `[]` | Monitors defined in values |
 | `retentionDays` | `30` | How long check results are kept |
@@ -118,6 +118,6 @@ ingress:
 
 The agent runs as a single replica (SQLite has one writer), as non-root with a read-only root filesystem and no capabilities. Ping checks use unprivileged ICMP sockets through the `net.ipv4.ping_group_range` sysctl.
 
-## Watch the watcher
+## Uptimy Cloud
 
-If the agent or the cluster goes down, nothing inside is left to tell you. **Settings → Connect to Uptimy** makes the agent check in with an [Uptimy](https://www.upti.my/?utm_source=artifacthub&utm_medium=chart&utm_campaign=agent) heartbeat every minute, and Uptimy alerts you from outside when it goes quiet.
+If the agent or the cluster goes down, nothing inside is left to tell you. **Settings → Connect to Uptimy Cloud** adds the agent to your [Uptimy](https://www.upti.my/?utm_source=artifacthub&utm_medium=chart&utm_campaign=agent) workspace: Uptimy alerts you from outside when it goes quiet, and its monitors show up there read-only, for status pages, reports and on-call. One agent per cluster gives you every cluster in one view.

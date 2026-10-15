@@ -261,28 +261,6 @@ func (f *fakeSMTP) message() smtpMessage {
 	}
 }
 
-func TestUptimy(t *testing.T) {
-	srv := newCaptureHTTP(t)
-	send(t, Notifier{Name: "Uptimy", Type: "uptimy", Config: Config{URL: srv.URL + "/v1/webhooks/agent/int-uuid/secret"}}, downAlert)
-	b := srv.bodies[0]
-	// The platform parses the generic webhook body; these are the keys it reads.
-	if b["monitor_id"] != float64(7) || b["monitor_name"] != "Checkout API" || b["status"] != "down" ||
-		b["kind"] != "healthcheck" || b["message"] != "HTTP 503" || b["time"] != "2026-10-01T09:30:00Z" {
-		t.Errorf("body = %v", b)
-	}
-
-	for _, bad := range []string{
-		"https://workflows.upti.my/v1/webhooks/railway/int-uuid/secret", // another integration's URL
-		"https://workflows.upti.my/v1/webhooks/agent/int-uuid",          // secret missing
-		"https://workflows.upti.my/",
-	} {
-		n := Notifier{Name: "Uptimy", Type: "uptimy", Config: Config{URL: bad}}
-		if err := n.Normalize(); err == nil {
-			t.Errorf("%s: expected an error", bad)
-		}
-	}
-}
-
 func TestShoutrrr(t *testing.T) {
 	srv := newCaptureHTTP(t)
 	host := strings.TrimPrefix(srv.URL, "http://")

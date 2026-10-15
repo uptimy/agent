@@ -278,6 +278,19 @@ var migrations = []string{
 		by_user TEXT NOT NULL,
 		ts INTEGER NOT NULL
 	);`,
+
+	// 7: Uptimy Cloud sync. Each monitor mirrored to Cloud, with what was last
+	// sent (hash), so only changes are pushed. No foreign key: a monitor
+	// deleted here keeps its row until its mirror is deleted in Cloud.
+	// The "Uptimy" alert channel is gone (the sync replaces it).
+	`CREATE TABLE cloud_monitors (
+		monitor_id INTEGER PRIMARY KEY,
+		kind TEXT NOT NULL,
+		client_ref TEXT NOT NULL,
+		cloud_uuid TEXT NOT NULL,
+		hash TEXT NOT NULL
+	);
+	DELETE FROM notifiers WHERE type = 'uptimy';`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

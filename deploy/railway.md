@@ -22,7 +22,7 @@ demo: https://uptimy-agent-production-b9a3.up.railway.app/status
 | --- | --- | --- |
 | `ADMIN_PASSWORD` | `${{secret(24)}}` | Password for the `admin` user, generated per deploy and visible in the service's Variables tab. More users can be added in the UI |
 | `RAILWAY_RUN_UID` | `0` | Railway volumes are mounted as root; the image runs as a non-root user by default |
-| `UPTIMY_HEARTBEAT_URL` | *(leave empty)* | Optional. Users can connect "Watch the watcher" from the agent's Settings page instead |
+| `UPTIMY_HEARTBEAT_URL` | *(leave empty)* | Optional. Users can "Connect to Uptimy Cloud" from the agent's Settings page instead |
 | `MONITORS_YAML` | *(empty, optional)* | Declarative monitors |
 
 Railway's `PORT` is picked up automatically.

@@ -32,13 +32,13 @@ func connectedAgent(t *testing.T) (*client, *fakeUptimy, *fakeHeartbeat) {
 func TestHeartbeatAlertAfter(t *testing.T) {
 	c, uptimy, hb := connectedAgent(t)
 
-	// New connections alert after 5 minutes: 1m interval + 4m grace, so a
-	// normal restart doesn't page anyone.
-	if hb.interval != 60 || hb.grace != 240 {
-		t.Fatalf("created with interval %d grace %d, want 60/240", hb.interval, hb.grace)
+	// New connections check in with every upload (the plan's interval, 60s
+	// here) and alert after two missed uploads.
+	if hb.interval != 60 || hb.grace != 60 {
+		t.Fatalf("created with interval %d grace %d, want 60/60", hb.interval, hb.grace)
 	}
 	code, body := c.do("GET", "/api/uptimy/heartbeat/settings", nil)
-	if code != 200 || body["available"] != true || body["alert_after_seconds"] != float64(300) || body["paused"] != false {
+	if code != 200 || body["available"] != true || body["alert_after_seconds"] != float64(120) || body["paused"] != false {
 		t.Fatalf("settings: %d %v", code, body)
 	}
 
@@ -137,21 +137,17 @@ func TestPauseAlerts(t *testing.T) {
 	if code != 200 || body["paused"] != true || !hb.paused {
 		t.Fatalf("pause: %d %v", code, body)
 	}
-	// Paused: the agent stops checking in instead of reporting Uptimy's 404s.
-	before := uptimy.checkIns
-	_, status := c.do("POST", "/api/uptimy/heartbeat/test", nil)
-	if status["paused"] != true || status["last_error"] != nil || uptimy.checkIns != before {
-		t.Fatalf("paused agent checked in or reported an error: %v (check-ins %d -> %d)", status, before, uptimy.checkIns)
+	if _, status := c.do("GET", "/api/uptimy/heartbeat", nil); status["paused"] != true {
+		t.Fatalf("pause not shown: %v", status)
 	}
 	// The pause survives a restart.
 	if conn, _ := c.srv.Store.UptimyConnection(context.Background()); !conn.Paused {
 		t.Fatal("pause not remembered")
 	}
 
-	// Resuming checks in right away.
 	code, body = c.do("PUT", "/api/uptimy/heartbeat/settings", map[string]any{"paused": false})
-	if code != 200 || body["paused"] != false || hb.paused || uptimy.checkIns != before+1 {
-		t.Fatalf("resume: %d %v (check-ins %d)", code, body, uptimy.checkIns)
+	if code != 200 || body["paused"] != false || hb.paused {
+		t.Fatalf("resume: %d %v", code, body)
 	}
 
 	// A pause made in Uptimy itself is picked up too.
@@ -175,7 +171,7 @@ func TestHeartbeatSettingsWithoutAccount(t *testing.T) {
 		t.Fatalf("settings without an account: %d %v", code, body)
 	}
 	raw, _ := json.Marshal(body["alert_after_choices"])
-	if string(raw) != "[2,5,15,30]" {
+	if string(raw) != "[2,5,10,15,30,60]" {
 		t.Fatalf("choices: %s", raw)
 	}
 }
