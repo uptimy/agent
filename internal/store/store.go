@@ -293,6 +293,12 @@ var migrations = []string{
 	DELETE FROM notifiers WHERE type = 'uptimy';
 	-- Pasted check-in URLs are gone too: connecting is Connect to Uptimy Cloud.
 	DELETE FROM settings WHERE key = 'uptimy_heartbeat_url';`,
+
+	// 8: why a healthcheck failed: the HTTP status code it got (0 for none or
+	// another check type) and the failure's class (timeout, dns, tls,
+	// connect, http_5xx, http_4xx, assertion, other; '' when it was up).
+	`ALTER TABLE results ADD COLUMN status_code INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE results ADD COLUMN error_class TEXT NOT NULL DEFAULT '';`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

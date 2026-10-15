@@ -557,9 +557,13 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 			continue // thinned: nothing changed and the last one is recent
 		}
 		latency := int(r.LatencyMS)
-		item := connect.UploadHealthcheck{HealthcheckUUID: c.CloudUUID, CheckedAt: r.Time, OK: r.OK, LatencyMs: &latency, Status: status}
+		item := connect.UploadHealthcheck{
+			HealthcheckUUID: c.CloudUUID, CheckedAt: r.Time, OK: r.OK, LatencyMs: &latency, Status: status,
+			StatusCode: r.StatusCode,
+		}
 		if !r.OK {
 			item.Message = truncate(r.Message)
+			item.ErrorClass = r.ErrorClass
 		}
 		if !since.IsZero() {
 			item.StatusSince = &since

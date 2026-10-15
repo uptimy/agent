@@ -28,17 +28,21 @@ func tlsExpiry(ctx context.Context, m monitor.Check) Outcome {
 	d := tls.Dialer{Config: &tls.Config{ServerName: host}}
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return Outcome{Message: trimErr(err)}
+		out := failure(err)
+		if out.ErrorClass == classOther {
+			out.ErrorClass = classTLS // a failed handshake
+		}
+		return out
 	}
 	defer conn.Close()
 	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
 	if len(certs) == 0 {
-		return Outcome{Message: "no certificate presented"}
+		return Outcome{Message: "no certificate presented", ErrorClass: classTLS}
 	}
 	days := int(time.Until(certs[0].NotAfter).Hours() / 24)
 	msg := fmt.Sprintf("certificate expires in %d days (%s)", days, certs[0].NotAfter.Format("2006-01-02"))
 	if days < m.Config.MinDaysRemaining {
-		return Outcome{Message: msg}
+		return Outcome{Message: msg, ErrorClass: classTLS}
 	}
 	return Outcome{OK: true, Message: msg}
 }

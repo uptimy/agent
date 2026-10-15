@@ -122,7 +122,7 @@ type ResultRow struct {
 // ResultsAfter returns up to limit results after rowid, in insertion order.
 func (s *Store) ResultsAfter(ctx context.Context, rowid int64, limit int) ([]ResultRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT rowid, monitor_id, ts, ok, latency_ms, message FROM results WHERE rowid > ? ORDER BY rowid LIMIT ?", rowid, limit)
+		"SELECT rowid, monitor_id, ts, ok, latency_ms, message, status_code, error_class FROM results WHERE rowid > ? ORDER BY rowid LIMIT ?", rowid, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func (s *Store) ResultsAfter(ctx context.Context, rowid int64, limit int) ([]Res
 	for rows.Next() {
 		var r ResultRow
 		var ts int64
-		if err := rows.Scan(&r.RowID, &r.MonitorID, &ts, &r.OK, &r.LatencyMS, &r.Message); err != nil {
+		if err := rows.Scan(&r.RowID, &r.MonitorID, &ts, &r.OK, &r.LatencyMS, &r.Message, &r.StatusCode, &r.ErrorClass); err != nil {
 			return nil, err
 		}
 		r.Time = fromMillis(ts)

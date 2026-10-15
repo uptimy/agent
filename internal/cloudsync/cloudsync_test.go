@@ -255,6 +255,35 @@ func TestResultCarriesTheStatusItCaused(t *testing.T) {
 	}
 }
 
+// Cloud shows the HTTP status of every result and why failures failed; a
+// result that's up has no error class to send.
+func TestUploadsCarryStatusCodeAndErrorClass(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	at := e.now.Add(-2 * time.Minute)
+	_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: at, OK: true, LatencyMS: 12, StatusCode: 200, ErrorClass: "stale"})
+	_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: at.Add(time.Minute), LatencyMS: 40, Message: "unexpected status 503", StatusCode: 503, ErrorClass: "http_5xx"})
+	if _, err := e.st.InsertEvent(ctx, monitor.Event{MonitorID: api.ID, Time: at.Add(time.Minute + time.Second), Status: monitor.StatusDown}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.cycle(ctx)
+	got := e.cloud.uploads[0].Healthchecks
+	if len(got) != 2 {
+		t.Fatalf("uploaded %+v", got)
+	}
+	if got[0].StatusCode != 200 || got[0].ErrorClass != "" {
+		t.Fatalf("up result %+v, want status 200 and no error class", got[0])
+	}
+	if got[1].StatusCode != 503 || got[1].ErrorClass != "http_5xx" {
+		t.Fatalf("failed result %+v, want status 503 and http_5xx", got[1])
+	}
+	raw, _ := json.Marshal(got[1])
+	if !strings.Contains(string(raw), `"statusCode":503`) || !strings.Contains(string(raw), `"errorClass":"http_5xx"`) {
+		t.Fatalf("wire format %s", raw)
+	}
+}
+
 func TestUnchangedResultsAreThinned(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

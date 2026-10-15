@@ -21,6 +21,11 @@ type Outcome struct {
 	// Latency overrides the probe's wall time as the result's latency, for
 	// probes whose wall time isn't the answer's (ping sends several).
 	Latency time.Duration
+	// StatusCode is the HTTP status an HTTP check got, if it got one.
+	StatusCode int
+	// ErrorClass is why it failed (see errorclass.go); Run fills in one for
+	// failures that don't say.
+	ErrorClass string
 }
 
 // Checker runs probes. It is safe for concurrent use.
@@ -60,9 +65,18 @@ func register(t monitor.Type, p Probe) {
 func (c *Checker) Run(ctx context.Context, m monitor.Check) Outcome {
 	p, ok := probes[m.Type]
 	if !ok {
-		return Outcome{Message: fmt.Sprintf("unsupported monitor type %q", m.Type)}
+		return Outcome{Message: fmt.Sprintf("unsupported monitor type %q", m.Type), ErrorClass: classOther}
 	}
-	return p(ctx, c, m)
+	out := p(ctx, c, m)
+	if !out.OK {
+		// Out of time is a timeout, whichever step it cut short.
+		if ctx.Err() == context.DeadlineExceeded {
+			out.ErrorClass = classTimeout
+		} else if out.ErrorClass == "" {
+			out.ErrorClass = classOther
+		}
+	}
+	return out
 }
 
 // trimErr shortens noisy wrapped errors from net/http for display.

@@ -96,7 +96,10 @@ func (s *Scheduler) probe(ctx context.Context, r *healthcheckRunner, m monitor.M
 	if out.Latency > 0 {
 		latency = out.Latency
 	}
-	res := monitor.Result{MonitorID: m.ID, Time: start.UTC(), OK: out.OK, LatencyMS: latency.Milliseconds(), Message: out.Message}
+	res := monitor.Result{
+		MonitorID: m.ID, Time: start.UTC(), OK: out.OK, LatencyMS: latency.Milliseconds(), Message: out.Message,
+		StatusCode: out.StatusCode, ErrorClass: out.ErrorClass,
+	}
 	if err := s.store.InsertResult(ctx, res); err != nil {
 		s.log.Error("saving result", "monitor", m.Name, "err", err)
 	}

@@ -197,10 +197,10 @@ func queryOutcome(m monitor.Check, first *string, server string) Outcome {
 		return Outcome{OK: true, Message: "query ok (" + server + ")"}
 	}
 	if first == nil {
-		return Outcome{Message: fmt.Sprintf("expected %q, query returned no rows", m.Config.Expected)}
+		return Outcome{Message: fmt.Sprintf("expected %q, query returned no rows", m.Config.Expected), ErrorClass: classAssertion}
 	}
 	if strings.TrimSpace(*first) != m.Config.Expected {
-		return Outcome{Message: fmt.Sprintf("expected %q, got %q", m.Config.Expected, truncate(*first, 100))}
+		return Outcome{Message: fmt.Sprintf("expected %q, got %q", m.Config.Expected, truncate(*first, 100)), ErrorClass: classAssertion}
 	}
 	return Outcome{OK: true, Message: fmt.Sprintf("returned %q (%s)", m.Config.Expected, server)}
 }
@@ -227,7 +227,7 @@ func dbFailure(target string, err error) Outcome {
 			msg = strings.ReplaceAll(msg, pw, "••••••")
 		}
 	}
-	return Outcome{Message: msg}
+	return Outcome{Message: msg, ErrorClass: classify(err)}
 }
 
 func closeQuietly(close func(context.Context) error) {

@@ -2,11 +2,16 @@ package checks
 
 import (
 	"context"
+	"crypto/x509"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/uptimy/agent/internal/monitor"
 )
@@ -27,8 +32,12 @@ func httpMonitor(t *testing.T, target string, cfg monitor.Config) monitor.Check 
 
 func TestHTTP(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/fail" {
+		switch r.URL.Path {
+		case "/fail":
 			w.WriteHeader(http.StatusInternalServerError)
+			return
+		case "/missing":
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		w.Write([]byte(`{"status":"ok"}`))
@@ -37,17 +46,80 @@ func TestHTTP(t *testing.T) {
 	c := New(nil)
 	ctx := context.Background()
 
-	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{})); !out.OK {
-		t.Fatalf("expected ok: %s", out.Message)
+	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{})); !out.OK || out.StatusCode != 200 || out.ErrorClass != "" {
+		t.Fatalf("expected ok with 200: %+v", out)
 	}
-	if out := c.Run(ctx, httpMonitor(t, srv.URL+"/fail", monitor.Config{})); out.OK || !strings.Contains(out.Message, "500") {
+	if out := c.Run(ctx, httpMonitor(t, srv.URL+"/fail", monitor.Config{})); out.OK || !strings.Contains(out.Message, "500") ||
+		out.StatusCode != 500 || out.ErrorClass != classHTTP5xx {
 		t.Fatalf("expected 500 failure: %+v", out)
 	}
-	if out := c.Run(ctx, httpMonitor(t, srv.URL+"/fail", monitor.Config{ExpectedStatus: "500"})); !out.OK {
-		t.Fatalf("expected 500 to be accepted: %s", out.Message)
+	if out := c.Run(ctx, httpMonitor(t, srv.URL+"/fail", monitor.Config{ExpectedStatus: "500"})); !out.OK || out.StatusCode != 500 {
+		t.Fatalf("expected 500 to be accepted: %+v", out)
 	}
-	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{Keyword: "degraded"})); out.OK {
-		t.Fatal("missing keyword should fail")
+	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{ExpectedStatus: "500"})); out.OK || out.StatusCode != 200 || out.ErrorClass != classAssertion {
+		t.Fatalf("an unexpected 2xx is an assertion failure: %+v", out)
+	}
+	if out := c.Run(ctx, httpMonitor(t, srv.URL+"/missing", monitor.Config{ExpectedStatus: "200"})); out.OK || out.ErrorClass != classHTTP4xx {
+		t.Fatalf("a 404 is http_4xx: %+v", out)
+	}
+	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{Keyword: "degraded"})); out.OK || out.StatusCode != 200 || out.ErrorClass != classAssertion {
+		t.Fatalf("missing keyword should fail as an assertion: %+v", out)
+	}
+}
+
+func TestHTTPTransportErrors(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := "http://" + ln.Addr().String()
+	ln.Close()
+	c := New(nil)
+	if out := c.Run(context.Background(), httpMonitor(t, closed, monitor.Config{})); out.OK || out.StatusCode != 0 || out.ErrorClass != classConnect {
+		t.Fatalf("refused: %+v", out)
+	}
+
+	// A certificate the agent doesn't trust.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	if out := c.Run(context.Background(), httpMonitor(t, srv.URL, monitor.Config{})); out.OK || out.ErrorClass != classTLS {
+		t.Fatalf("untrusted certificate: %+v", out)
+	}
+
+	// Out of time is a timeout.
+	block := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-block }))
+	defer slow.Close()
+	defer close(block)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if out := c.Run(ctx, httpMonitor(t, slow.URL, monitor.Config{})); out.OK || out.ErrorClass != classTimeout {
+		t.Fatalf("timeout: %+v", out)
+	}
+}
+
+func TestClassify(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{nil, ""},
+		{&net.DNSError{Err: "no such host", Name: "nope.invalid", IsNotFound: true}, classDNS},
+		{&net.DNSError{Err: "i/o timeout", IsTimeout: true}, classDNS}, // a lookup that timed out is still DNS
+		{fmt.Errorf("get: %w", context.DeadlineExceeded), classTimeout},
+		{&net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, classConnect},
+		{&net.OpError{Op: "read", Err: syscall.ECONNRESET}, classConnect},
+		{x509.UnknownAuthorityError{}, classTLS},
+		{errors.New("something else"), classOther},
+	} {
+		if got := classify(tc.err); got != tc.want {
+			t.Errorf("classify(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+	for code, want := range map[int]string{503: classHTTP5xx, 404: classHTTP4xx, 302: classAssertion, 200: classAssertion} {
+		if got := classForStatus(code); got != want {
+			t.Errorf("classForStatus(%d) = %q, want %q", code, got, want)
+		}
 	}
 }
 
@@ -62,14 +134,14 @@ func TestTCP(t *testing.T) {
 		t.Fatalf("expected connect: %s", out.Message)
 	}
 	ln.Close()
-	if out := tcp(ctx, addr); out.OK {
-		t.Fatal("expected failure after close")
+	if out := tcp(ctx, addr); out.OK || out.ErrorClass != classConnect {
+		t.Fatalf("expected a connect failure after close: %+v", out)
 	}
 }
 
 func TestKubernetesUnavailable(t *testing.T) {
 	m := monitor.Check{Type: monitor.TypeKubernetes, Target: "default/deployment/api"}
-	if out := New(nil).Run(context.Background(), m); out.OK {
-		t.Fatal("expected failure outside a cluster")
+	if out := New(nil).Run(context.Background(), m); out.OK || out.ErrorClass != classOther {
+		t.Fatalf("expected failure outside a cluster: %+v", out)
 	}
 }

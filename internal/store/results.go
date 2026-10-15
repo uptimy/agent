@@ -12,14 +12,14 @@ import (
 // InsertResult records a healthcheck result.
 func (s *Store) InsertResult(ctx context.Context, r monitor.Result) error {
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO results (monitor_id, ts, ok, latency_ms, message) VALUES (?, ?, ?, ?, ?)",
-		r.MonitorID, r.Time.UnixMilli(), r.OK, r.LatencyMS, r.Message)
+		"INSERT INTO results (monitor_id, ts, ok, latency_ms, message, status_code, error_class) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		r.MonitorID, r.Time.UnixMilli(), r.OK, r.LatencyMS, r.Message, r.StatusCode, r.ErrorClass)
 	return err
 }
 
 // RecentResults returns the newest limit results, oldest first.
 func (s *Store) RecentResults(ctx context.Context, monitorID int64, limit int) ([]monitor.Result, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT monitor_id, ts, ok, latency_ms, message FROM (
+	rows, err := s.db.QueryContext(ctx, `SELECT monitor_id, ts, ok, latency_ms, message, status_code, error_class FROM (
 		SELECT * FROM results WHERE monitor_id = ? ORDER BY ts DESC LIMIT ?
 	) ORDER BY ts`, monitorID, limit)
 	if err != nil {
@@ -31,7 +31,7 @@ func (s *Store) RecentResults(ctx context.Context, monitorID int64, limit int) (
 // ResultsSince returns results newer than since, oldest first.
 func (s *Store) ResultsSince(ctx context.Context, monitorID int64, since time.Time) ([]monitor.Result, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT monitor_id, ts, ok, latency_ms, message FROM results WHERE monitor_id = ? AND ts >= ? ORDER BY ts",
+		"SELECT monitor_id, ts, ok, latency_ms, message, status_code, error_class FROM results WHERE monitor_id = ? AND ts >= ? ORDER BY ts",
 		monitorID, since.UnixMilli())
 	if err != nil {
 		return nil, err
@@ -45,7 +45,7 @@ func scanResults(rows *sql.Rows) ([]monitor.Result, error) {
 	for rows.Next() {
 		var r monitor.Result
 		var ts int64
-		if err := rows.Scan(&r.MonitorID, &ts, &r.OK, &r.LatencyMS, &r.Message); err != nil {
+		if err := rows.Scan(&r.MonitorID, &ts, &r.OK, &r.LatencyMS, &r.Message, &r.StatusCode, &r.ErrorClass); err != nil {
 			return nil, err
 		}
 		r.Time = fromMillis(ts)

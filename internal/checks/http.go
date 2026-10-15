@@ -30,7 +30,7 @@ func (c *Checker) http(ctx context.Context, m monitor.Check) Outcome {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return Outcome{Message: trimErr(err)}
+		return failure(err)
 	}
 	defer resp.Body.Close()
 
@@ -39,18 +39,18 @@ func (c *Checker) http(ctx context.Context, m monitor.Check) Outcome {
 		return resp.StatusCode >= r.Min && resp.StatusCode <= r.Max
 	}) {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return Outcome{Message: fmt.Sprintf("unexpected status %d", resp.StatusCode)}
+		return Outcome{Message: fmt.Sprintf("unexpected status %d", resp.StatusCode), StatusCode: resp.StatusCode, ErrorClass: classForStatus(resp.StatusCode)}
 	}
 	if m.Config.Keyword != "" {
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if err != nil {
-			return Outcome{Message: "reading body: " + trimErr(err)}
+			return Outcome{Message: "reading body: " + trimErr(err), StatusCode: resp.StatusCode, ErrorClass: classify(err)}
 		}
 		if !strings.Contains(string(body), m.Config.Keyword) {
-			return Outcome{Message: fmt.Sprintf("keyword %q not found", m.Config.Keyword)}
+			return Outcome{Message: fmt.Sprintf("keyword %q not found", m.Config.Keyword), StatusCode: resp.StatusCode, ErrorClass: classAssertion}
 		}
 	} else {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	}
-	return Outcome{OK: true, Message: fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode))}
+	return Outcome{OK: true, Message: fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)), StatusCode: resp.StatusCode}
 }

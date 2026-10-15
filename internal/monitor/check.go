@@ -113,6 +113,12 @@ type Result struct {
 	OK        bool      `json:"ok"`
 	LatencyMS int64     `json:"latency_ms"`
 	Message   string    `json:"message"`
+	// StatusCode is the HTTP status the check got, whatever it was; 0 when
+	// there was no response or it isn't an HTTP check.
+	StatusCode int `json:"status_code,omitempty"`
+	// ErrorClass is why a failed check failed (timeout, dns, tls, connect,
+	// http_5xx, http_4xx, assertion, other); "" when it was up.
+	ErrorClass string `json:"error_class,omitempty"`
 }
 
 // StatusRange is an inclusive HTTP status code range.

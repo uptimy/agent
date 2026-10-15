@@ -183,6 +183,8 @@ type UploadHealthcheck struct {
 	Message         string     `json:"message,omitempty"`
 	Status          string     `json:"status"` // up, degraded, down
 	StatusSince     *time.Time `json:"statusSince,omitempty"`
+	StatusCode      int        `json:"statusCode,omitempty"` // HTTP checks that got a response
+	ErrorClass      string     `json:"errorClass,omitempty"` // failures only
 }
 
 // UploadHeartbeat is one heartbeat run as the agent judged it.

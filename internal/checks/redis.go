@@ -75,7 +75,7 @@ func redis(ctx context.Context, m monitor.Check) Outcome {
 		return dbFailure(target, err)
 	}
 	if reply != "PONG" {
-		return Outcome{Message: fmt.Sprintf("unexpected reply to PING: %q", truncate(reply, 100))}
+		return Outcome{Message: fmt.Sprintf("unexpected reply to PING: %q", truncate(reply, 100)), ErrorClass: classAssertion}
 	}
 	return Outcome{OK: true, Message: "PONG"}
 }
