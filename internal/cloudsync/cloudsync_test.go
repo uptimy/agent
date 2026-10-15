@@ -238,6 +238,23 @@ func TestFirstCycleSetsUpMirrorsAndUploads(t *testing.T) {
 	}
 }
 
+// The scheduler records a status change after the check that caused it has
+// finished: that result must already carry the new status.
+func TestResultCarriesTheStatusItCaused(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	started := e.now.Add(-time.Minute)
+	_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: started, OK: false, LatencyMS: 3000})
+	if _, err := e.st.InsertEvent(ctx, monitor.Event{MonitorID: api.ID, Time: started.Add(3050 * time.Millisecond), Status: monitor.StatusDown}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.cycle(ctx)
+	if got := e.cloud.uploads[0].Healthchecks; len(got) != 1 || got[0].Status != "down" {
+		t.Fatalf("uploaded %+v, want the result that took it down marked down", got)
+	}
+}
+
 func TestUnchangedResultsAreThinned(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

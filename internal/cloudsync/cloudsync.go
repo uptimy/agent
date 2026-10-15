@@ -39,6 +39,9 @@ const (
 	maxBatchesPerCycle = 20
 	defaultInterval    = 5 * time.Minute
 	retryInterval      = time.Minute
+	// statusSlack covers the moment between a result being saved and the
+	// status change it causes; far shorter than any check interval.
+	statusSlack = time.Second
 )
 
 // Status is what the UI shows about the sync.
@@ -581,7 +584,7 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 		if !mirrored || c.CloudUUID == "" || c.Kind != monitor.KindHeartbeat || now.Sub(*run.FinishedAt) > maxAge {
 			continue
 		}
-		status, _, _, err := s.Store.StatusAt(ctx, run.MonitorID, *run.FinishedAt)
+		status, _, _, err := s.Store.StatusAt(ctx, run.MonitorID, run.FinishedAt.Add(statusSlack))
 		if err != nil {
 			return false, err
 		}
@@ -631,7 +634,10 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 // Cloud's terms: down, or up, or degraded for a failing check that hasn't
 // reached its failure threshold yet.
 func (s *Syncer) healthcheckStatus(ctx context.Context, r monitor.Result) (string, time.Time, error) {
-	status, since, _, err := s.Store.StatusAt(ctx, r.MonitorID, r.Time)
+	// A result is stamped when its check started; the status change it causes
+	// is recorded once the check is done, up to its latency later.
+	decided := r.Time.Add(time.Duration(r.LatencyMS)*time.Millisecond + statusSlack)
+	status, since, _, err := s.Store.StatusAt(ctx, r.MonitorID, decided)
 	if err != nil {
 		return "", time.Time{}, err
 	}
