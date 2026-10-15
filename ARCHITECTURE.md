@@ -14,7 +14,6 @@ flowchart LR
         Hub["events<br/>live update hub"]
         Files["filesync<br/>YAML monitors"]
         Discovery["discovery<br/>labeled k8s resources"]
-        Watchdog["connect<br/>Uptimy check-in (pasted URL)"]
         Sync["cloudsync<br/>Uptimy Cloud sync"]
     end
 
@@ -33,9 +32,8 @@ flowchart LR
     Hub -- SSE --> Browser
     Sched --> Notify
     Notify --> Channels[(Slack · Discord<br/>Telegram · webhooks)]
-    Watchdog -- check-in --> Uptimy[(Uptimy)]
     Store --> Sync
-    Sync -- mirrors + results --> Uptimy
+    Sync -- mirrors + results --> Uptimy[(Uptimy)]
 ```
 
 ## Two kinds of monitor
@@ -84,7 +82,7 @@ While a monitor stays down, channels with a repeat interval get **reminders** (`
 
 `internal/cloudsync` runs for a "Connect to Uptimy Cloud" connection (design: `AGENT_CLOUD_SYNC_PLAN.md` in the uptimy repo). The agent stays the source of truth; Cloud gets a read-only copy.
 
-1. **Set up** once per connection: register the agent's private location (`PUT /v1/api/agent/location`, keyed by the install id) and turn its check-in heartbeat into an `agent_liveness` heartbeat at the plan's upload interval. From then on every upload is the check-in, and the old one-minute ping stops.
+1. **Set up** once per connection: register the agent's private location (`PUT /v1/api/agent/location`, keyed by the install id) and its `agent_liveness` check-in heartbeat at the plan's upload interval. Every upload is the check-in.
 2. **Mirror** monitors: each cycle sends the ones whose definition changed (`cloud_monitors.hash`) and deletes mirrors of deleted ones; every 10 minutes it also compares with Cloud's own lists. Healthchecks go to upti.my-api, heartbeats to upti.my-heartbeat with `source: agent`.
 3. **Upload** to `ingest.upti.my`: results after `results.rowid` and finished runs after `runs.id` (never past one still running), each with the status the agent had then (from `events`: down, or up/degraded by the result), thinned to one result per monitor per interval plus every status change. A batch's id comes from its cursors, so a retry is deduplicated; cursors move only once Cloud accepts it. 429 waits for `Retry-After`, 409 sets the location up again, and a plan limit keeps the cursor until the agent fits the plan.
 
@@ -127,10 +125,9 @@ SQLite through `modernc.org/sqlite` (pure Go, so the binary builds without cgo),
 
 Domain packages own the types and `internal/store` persists them; users, which only the store and sign-in use, are the exception. Settings rows are read and written only through typed methods (`StatusPage`, `SaveStatusPage`, `UptimyConnection`, ...), and their keys never leave the store. Changes that belong together (the page's settings and its layout, a connection and its check-in URL) are saved in one transaction.
 
-Environment variables don't hold data. They set how the process runs (`PORT`, `DATA_DIR`, `RETENTION_DAYS`, ...) and three things that suit config better than a database:
+Environment variables don't hold data. They set how the process runs (`PORT`, `DATA_DIR`, `RETENTION_DAYS`, ...) and two things that suit config better than a database:
 
 - `ADMIN_PASSWORD` creates the first admin and resets that admin's password on every start (the recovery path). The UI won't change a password the environment sets.
-- `UPTIMY_HEARTBEAT_URL` pins a pasted check-in URL, read-only in the UI, for agents without a persistent volume.
 - `MONITORS_FILE` / `MONITORS_YAML` declare monitors. They're synced into the database on start, matched by name, and read-only in the UI.
 
 ## The UI

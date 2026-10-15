@@ -366,7 +366,8 @@ export interface Info {
   kubernetes: boolean;
   /** Kubernetes discovery is running (in a cluster, not turned off). */
   discovery: boolean;
-  uptimy_heartbeat: boolean;
+  /** Connected to Uptimy Cloud. */
+  uptimy_connected: boolean;
   status_page_enabled: boolean;
   status_page_title: string;
   monitors_file: boolean;
@@ -400,23 +401,16 @@ export interface KubeResources {
   truncated: string[];
 }
 
-export interface UptimyCheckIn {
-  enabled: boolean;
-  // Set when connected with "Connect to Uptimy" (vs. a pasted URL or env var).
+// The agent's Uptimy Cloud connection ("Connect to Uptimy Cloud").
+export interface UptimyStatus {
+  connected: boolean;
+  // Paused in Uptimy: nobody is alerted when the agent goes silent.
+  paused: boolean;
   account: { workspace_name: string; connected_at: string; connected_by: string } | null;
+  // Uploads are the agent's check-in.
+  sync?: CloudSync;
   // Only on disconnect: something couldn't be cleaned up in Uptimy.
   warning?: string;
-  url?: string;
-  managed_by_env: boolean;
-  interval_seconds: number;
-  last_ping_at: string | null;
-  last_ok: boolean;
-  last_error?: string;
-  // Paused in Uptimy: nobody is alerted when the agent stops checking in.
-  paused: boolean;
-  // Uptimy Cloud sync, for a "Connect to Uptimy Cloud" connection: its
-  // uploads are the agent's check-in.
-  sync?: CloudSync;
 }
 
 export interface CloudSync {
@@ -431,8 +425,7 @@ export interface CloudSync {
   heartbeats: number;
 }
 
-// When Uptimy alerts about a silent agent. Only available for a
-// "Connect to Uptimy" connection; Uptimy holds the values.
+// When Uptimy alerts about a silent agent; Uptimy holds the values.
 export interface UptimyAlerting {
   available: boolean;
   alert_after_seconds?: number;
@@ -701,10 +694,9 @@ export const api = {
   retryDelivery: (d: Pick<Delivery, "alert_id" | "notifier_id">) =>
     request<void>("POST", `/api/alerts/${d.alert_id}/deliveries/${d.notifier_id}/retry`),
 
-  uptimyCheckIn: () => request<UptimyCheckIn>("GET", "/api/uptimy/heartbeat"),
-  connectUptimyURL: (url: string) => request<UptimyCheckIn>("PUT", "/api/uptimy/heartbeat", { url }),
-  disconnectUptimy: () => request<UptimyCheckIn>("DELETE", "/api/uptimy/heartbeat"),
-  testUptimyCheckIn: () => request<UptimyCheckIn>("POST", "/api/uptimy/heartbeat/test"),
+  uptimyStatus: () => request<UptimyStatus>("GET", "/api/uptimy"),
+  disconnectUptimy: () => request<UptimyStatus>("DELETE", "/api/uptimy"),
+  uploadToUptimy: () => request<UptimyStatus>("POST", "/api/uptimy/upload"),
   uptimyAlerting: () => request<UptimyAlerting>("GET", "/api/uptimy/heartbeat/settings"),
   updateUptimyAlerting: (patch: { alert_after_seconds?: number; paused?: boolean }) =>
     request<UptimyAlerting>("PUT", "/api/uptimy/heartbeat/settings", patch),
@@ -714,7 +706,7 @@ export const api = {
   startUptimyConnect: (origin: string) =>
     request<{ authorize_url: string }>("POST", "/api/uptimy/connect/start", { origin }),
   finishUptimyConnect: (state: string, code: string) =>
-    request<UptimyCheckIn>("POST", "/api/uptimy/connect/finish", { state, code }),
+    request<UptimyStatus>("POST", "/api/uptimy/connect/finish", { state, code }),
 
   announcement: () => request<Announcement | null>("GET", "/api/status-page/announcement"),
   saveAnnouncement: (a: { title: string; message: string; show_until: string | null }) =>

@@ -11,8 +11,7 @@ import (
 )
 
 // When Uptimy alerts about a silent agent, and how to quiet it for planned
-// work. Only for "Connect to Uptimy" connections: a pasted heartbeat URL
-// gives the agent no access to the heartbeat's settings.
+// work, for a "Connect to Uptimy Cloud" connection.
 //
 // Uptimy holds the settings (people can also change them there or with
 // uptimyctl), so every read goes to Uptimy. The agent only remembers what it
@@ -37,13 +36,13 @@ type heartbeatSettingsResponse struct {
 	MaintenanceChoices      []int `json:"maintenance_choices"`
 }
 
-// checkInInterval is how often the agent checks in: every upload once the
-// Cloud sync is set up, otherwise the old one-minute ping.
+// checkInInterval is how often the agent checks in: with every upload, at the
+// plan's check interval (5 minutes until the sync knows it).
 func checkInInterval(conn *connect.Connection) time.Duration {
-	if conn.LocationUUID != "" && conn.UploadIntervalSeconds > 0 {
+	if conn.UploadIntervalSeconds > 0 {
 		return time.Duration(conn.UploadIntervalSeconds) * time.Second
 	}
-	return connect.CheckInInterval
+	return 5 * time.Minute
 }
 
 // alertAfterChoicesFor offers only delays of at least two check-ins, so one
@@ -69,8 +68,7 @@ func (s *Server) uptimyClient() *connect.Client {
 // settingsResponse describes hs, keeping the watchdog in step with a pause
 // made in Uptimy itself.
 func (s *Server) settingsResponse(ctx context.Context, conn *connect.Connection, hs connect.HeartbeatSettings) heartbeatSettingsResponse {
-	s.Watchdog.SetPaused(ctx, hs.Paused)
-	if conn.Paused && !hs.Paused && conn.LocationUUID != "" {
+	if conn.Paused && !hs.Paused {
 		s.Sync.Trigger() // resumed: check in right away
 	}
 	if conn.Paused != hs.Paused {
@@ -101,7 +99,7 @@ func (s *Server) connectionForSettings(w http.ResponseWriter, r *http.Request) *
 		s.internalError(w, r, err)
 		return nil
 	}
-	if conn == nil || s.Watchdog.ManagedByEnv() {
+	if conn == nil {
 		writeJSON(w, http.StatusOK, heartbeatSettingsResponse{AlertAfterChoices: alertAfterChoices, MaintenanceChoices: maintenanceChoices})
 		return nil
 	}
@@ -248,15 +246,6 @@ func (s *Server) restoreAfterMaintenance(ctx context.Context, conn *connect.Conn
 	}
 	s.Log.Info("maintenance window ended; normal alerting restored")
 	return hs, nil
-}
-
-// RestorePaused carries a heartbeat paused from the agent over a restart, so
-// the agent doesn't report check-ins that Uptimy rejects on purpose. Call it
-// before the watchdog starts.
-func (s *Server) RestorePaused(ctx context.Context) {
-	if conn, err := s.Store.UptimyConnection(ctx); err == nil && conn != nil && conn.Paused {
-		s.Watchdog.SetPaused(ctx, true)
-	}
 }
 
 // RunUptimyMaintenance restores normal alerting when a maintenance window

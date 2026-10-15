@@ -150,7 +150,6 @@ Environment variables set how the agent runs, its secrets, and (optionally) moni
 | `KUBERNETES_DISCOVERY` | `true` | Create monitors for resources labeled `upti.my/monitor: "true"` (see [Auto-discovery](#auto-discovery)). Only applies inside a cluster |
 | `RETENTION_DAYS` | `30` | How long check results, heartbeat runs, events and alerts are kept. A monitor's current status is kept however old |
 | `TRUSTED_PROXIES` | `private` | Proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed: who signed in (for the sign-in rate limit) and whether they used HTTPS (for Secure cookies). Comma-separated addresses and ranges (`10.0.0.0/8, 192.0.2.1`), `private` for loopback and private networks (where an Ingress, Railway's edge or a local proxy connects from), or `none` |
-| `UPTIMY_HEARTBEAT_URL` | – | Optional. Pins a pasted check-in URL (see [Uptimy Cloud](#uptimy-cloud)), for agents without a persistent volume; otherwise connect in the UI |
 | `AGENT_NAME` | hostname | How this agent is labeled in Uptimy |
 
 ### Monitors in YAML
@@ -344,7 +343,6 @@ Open **Settings → Uptimy Cloud** and click **Connect to Uptimy Cloud**. Sign i
 - The agent gets an **agent-scoped key**, which can only manage this agent's location, monitors and check-in, not the rest of your workspace. It stays on the agent's server. **Disconnect** removes the agent and its monitors from Uptimy and revokes the key; reports already made keep their numbers. Reconnecting (say, after reinstalling) reuses the same location and check-in.
 - **Planned work:** **Allow downtime** for 30 minutes, 1 hour or 4 hours before working on the agent or its server. This pushes the alert deadline back instead of pausing, so Uptimy still alerts if the agent isn't back when the window ends. **Pause until I resume** is there too, but nothing alerts until you resume.
 - How many agents a workspace can connect depends on its plan. Set `AGENT_NAME` to label the agent in Uptimy; the default is the hostname, which in Kubernetes is the pod name.
-- Only want the outside alert? Choose **Or paste a heartbeat URL instead**, or set `UPTIMY_HEARTBEAT_URL`, which pins it read-only for GitOps setups. The agent then just checks in every minute and nothing else is sent.
 
 ## Development
 

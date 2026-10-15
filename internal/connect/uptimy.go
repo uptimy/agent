@@ -27,8 +27,8 @@ const (
 // or never valid).
 var ErrKeyRejected = errors.New("Uptimy rejected the agent key")
 
-// Client talks to Uptimy with an agent-scoped API key: just enough to check
-// the key, manage the agent's own heartbeat, and revoke the key again.
+// Client talks to Uptimy with an agent-scoped API key: the agent's location,
+// its mirrored monitors and check-in (cloud.go), and revoking the key.
 type Client struct {
 	APIURL        string
 	HeartbeatsURL string
@@ -122,10 +122,6 @@ func (c *Client) WhoAmI(ctx context.Context, key string) (KeyInfo, error) {
 	err := c.do(ctx, key, http.MethodGet, c.APIURL+"/v1/api/api-key", nil, &out)
 	return out.Data, err
 }
-
-// CheckInInterval is how often the agent checks in with Uptimy. When Uptimy
-// alerts is set separately, as the heartbeat's grace (see GraceFor).
-const CheckInInterval = time.Minute
 
 // Connection is an account connection made through "Connect to Uptimy". The
 // agent key never leaves the agent's server.

@@ -113,16 +113,15 @@ func newTestServerWithConfig(t *testing.T, cfg config.Config) (*client, *store.S
 	if err := sched.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	watchdog := connect.NewWatchdog("", false, time.Minute, "test", sched.Counts, log)
 	syncer := cloudsync.New(st, func() *connect.Client {
 		c := connect.NewClient(cfg.UptimyAPIURL, cfg.UptimyHeartbeatsURL)
 		c.IngestURL = cfg.UptimyAPIURL // the fake Uptimy serves ingest too
 		return c
-	}, cfg.AgentName, "test", log, func() { watchdog.SetURL("") })
+	}, cfg.AgentName, "test", log)
 	srv := &Server{
 		Config: cfg, Version: "test",
 		Store: st, Scheduler: sched, Sender: sender, Alerts: alerts, Hub: hub, Log: log,
-		Watchdog: watchdog, Sync: syncer,
+		Sync: syncer,
 	}
 	ts := httptest.NewServer(srv.Handler(http.NotFoundHandler()))
 	t.Cleanup(ts.Close)
@@ -248,48 +247,6 @@ func TestStatusPageShowsOnlyRealRecoveries(t *testing.T) {
 	}
 	if events[0].(map[string]any)["status"] != "up" || events[1].(map[string]any)["status"] != "down" {
 		t.Fatalf("unexpected order/status: %v", events)
-	}
-}
-
-func TestConnectHeartbeat(t *testing.T) {
-	pings := make(chan struct{}, 10)
-	uptimy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { pings <- struct{}{} }))
-	defer uptimy.Close()
-
-	c, st := newTestServerWithStore(t)
-	c.login("admin", adminPassword)
-
-	if code, _ := c.do("PUT", "/api/uptimy/heartbeat", map[string]string{"url": "nope"}); code != 400 {
-		t.Fatalf("bad URL accepted: %d", code)
-	}
-	unknown := httptest.NewServer(http.NotFoundHandler())
-	defer unknown.Close()
-	if code, body := c.do("PUT", "/api/uptimy/heartbeat", map[string]string{"url": unknown.URL + "/v1/monitors/typo"}); code != 422 || body["error"] == nil {
-		t.Fatalf("heartbeat Uptimy rejected was accepted: %d %v", code, body)
-	}
-	if saved, _ := st.HeartbeatURL(context.Background()); saved != "" {
-		t.Fatalf("rejected URL was saved: %q", saved)
-	}
-	code, body := c.do("PUT", "/api/uptimy/heartbeat", map[string]string{"url": uptimy.URL + "/v1/monitors/tok"})
-	if code != 200 || body["enabled"] != true || body["last_ok"] != true {
-		t.Fatalf("connect: %d %v", code, body)
-	}
-	select {
-	case <-pings:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no ping reached Uptimy")
-	}
-	if saved, _ := st.HeartbeatURL(context.Background()); saved != uptimy.URL+"/v1/monitors/tok" {
-		t.Fatalf("URL not persisted: %q", saved)
-	}
-	if code, body := c.do("POST", "/api/uptimy/heartbeat/test", nil); code != 200 || body["last_ok"] != true {
-		t.Fatalf("test ping: %d %v", code, body)
-	}
-	if code, body := c.do("DELETE", "/api/uptimy/heartbeat", nil); code != 200 || body["enabled"] != false {
-		t.Fatalf("disconnect: %d %v", code, body)
-	}
-	if saved, _ := st.HeartbeatURL(context.Background()); saved != "" {
-		t.Fatalf("URL not cleared: %q", saved)
 	}
 }
 

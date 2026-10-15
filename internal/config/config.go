@@ -39,11 +39,6 @@ type Config struct {
 	// happens until something is labeled.
 	KubernetesDiscovery bool
 
-	// UptimyHeartbeatURL pins the "Watch the watcher" check-in URL, for
-	// agents whose database doesn't survive a restart. Usually it's set up
-	// with "Connect to Uptimy" in the UI instead.
-	UptimyHeartbeatURL string
-
 	// Uptimy endpoints used by "Connect to Uptimy". Only change these for
 	// development against a local Uptimy.
 	UptimyAppURL        string
@@ -69,7 +64,6 @@ func Load() (Config, error) {
 		AdminPassword:       os.Getenv("ADMIN_PASSWORD"),
 		MonitorsFile:        os.Getenv("MONITORS_FILE"),
 		MonitorsYAML:        os.Getenv("MONITORS_YAML"),
-		UptimyHeartbeatURL:  os.Getenv("UPTIMY_HEARTBEAT_URL"),
 		UIDevServer:         os.Getenv("UI_DEV_SERVER"),
 		UptimyAppURL:        env("UPTIMY_APP_URL", "https://app.upti.my"),
 		UptimyAPIURL:        env("UPTIMY_API_URL", "https://api.upti.my"),

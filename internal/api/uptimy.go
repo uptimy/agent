@@ -29,44 +29,38 @@ func randomToken(n int) string {
 	return base64.RawURLEncoding.EncodeToString(buf)
 }
 
-type heartbeatStatusResponse struct {
-	connect.Status
-	// Sync is the Uptimy Cloud sync, for account connections.
-	Sync *cloudsync.Status `json:"sync,omitempty"`
-	// Account is set when connected through "Connect to Uptimy".
-	Account *struct {
-		WorkspaceName string    `json:"workspace_name"`
-		ConnectedAt   time.Time `json:"connected_at"`
-		ConnectedBy   string    `json:"connected_by"`
-	} `json:"account"`
+// uptimyStatusResponse is the agent's Uptimy Cloud connection, or nothing
+// but Connected false.
+type uptimyStatusResponse struct {
+	Connected bool `json:"connected"`
+	// Paused in Uptimy: nobody is alerted when the agent goes silent.
+	Paused  bool              `json:"paused"`
+	Account *uptimyAccount    `json:"account"`
+	Sync    *cloudsync.Status `json:"sync,omitempty"`
 }
 
-func (s *Server) heartbeatStatusFor(r *http.Request) (heartbeatStatusResponse, error) {
-	resp := heartbeatStatusResponse{Status: s.Watchdog.Status()}
-	if !currentUser(r).IsAdmin() {
-		resp.URL = "" // the URL embeds the heartbeat's secret token
-	}
-	if resp.ManagedByEnv {
-		return resp, nil
-	}
+type uptimyAccount struct {
+	WorkspaceName string    `json:"workspace_name"`
+	ConnectedAt   time.Time `json:"connected_at"`
+	ConnectedBy   string    `json:"connected_by"`
+}
+
+func (s *Server) uptimyStatusFor(r *http.Request) (uptimyStatusResponse, error) {
 	conn, err := s.Store.UptimyConnection(r.Context())
 	if err != nil || conn == nil {
-		return resp, err
+		return uptimyStatusResponse{}, err
 	}
-	resp.Account = &struct {
-		WorkspaceName string    `json:"workspace_name"`
-		ConnectedAt   time.Time `json:"connected_at"`
-		ConnectedBy   string    `json:"connected_by"`
-	}{conn.WorkspaceName, conn.ConnectedAt, conn.ConnectedBy}
-	if s.Sync != nil {
-		st := s.Sync.Status()
-		resp.Sync = &st
-	}
-	return resp, nil
+	st := s.Sync.Status()
+	return uptimyStatusResponse{
+		Connected: true,
+		Paused:    conn.Paused,
+		Account:   &uptimyAccount{conn.WorkspaceName, conn.ConnectedAt, conn.ConnectedBy},
+		Sync:      &st,
+	}, nil
 }
 
-func (s *Server) writeHeartbeatStatus(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.heartbeatStatusFor(r)
+func (s *Server) writeUptimyStatus(w http.ResponseWriter, r *http.Request) {
+	resp, err := s.uptimyStatusFor(r)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -74,47 +68,8 @@ func (s *Server) writeHeartbeatStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) heartbeatStatus(w http.ResponseWriter, r *http.Request) {
-	s.writeHeartbeatStatus(w, r)
-}
-
-func (s *Server) rejectIfEnvManaged(w http.ResponseWriter) bool {
-	if s.Watchdog.ManagedByEnv() {
-		writeError(w, http.StatusConflict, "the heartbeat is set by the UPTIMY_HEARTBEAT_URL environment variable")
-		return true
-	}
-	return false
-}
-
-// connectHeartbeat verifies a pasted heartbeat URL (or bare token) by sending
-// a check-in, and saves it only once Uptimy accepts it. This is the manual
-// alternative to "Connect to Uptimy".
-func (s *Server) connectHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if s.rejectIfEnvManaged(w) {
-		return
-	}
-	var in struct {
-		URL string `json:"url"`
-	}
-	if !decode(w, r, &in) {
-		return
-	}
-	target, err := connect.NormalizeHeartbeatURL(in.URL)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	if err := s.Watchdog.Connect(ctx, target); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-	if err := s.Store.SetHeartbeatURL(r.Context(), target); err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	s.writeHeartbeatStatus(w, r)
+func (s *Server) uptimyStatus(w http.ResponseWriter, r *http.Request) {
+	s.writeUptimyStatus(w, r)
 }
 
 // pendingConnect is a "Connect to Uptimy" handoff in progress. The state is
@@ -166,9 +121,6 @@ func (f *connectFlows) take(state string, userID int64) (pendingConnect, bool) {
 // <origin>/uptimy/connected with a one-time code and the state, which the page
 // hands to finishConnect.
 func (s *Server) startConnect(w http.ResponseWriter, r *http.Request) {
-	if s.rejectIfEnvManaged(w) {
-		return
-	}
 	var in struct {
 		Origin string `json:"origin"`
 	}
@@ -207,9 +159,6 @@ func (s *Server) startConnect(w http.ResponseWriter, r *http.Request) {
 // creates (or reclaims) the agent's heartbeat, checks in once, and saves the
 // connection.
 func (s *Server) finishConnect(w http.ResponseWriter, r *http.Request) {
-	if s.rejectIfEnvManaged(w) {
-		return
-	}
 	var in struct {
 		State string `json:"state"`
 		Code  string `json:"code"`
@@ -291,16 +240,13 @@ func (s *Server) finishConnect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.Log.Info("connected to Uptimy Cloud", "workspace", who.Workspace.Name, "location", conn.LocationUUID)
-	s.writeHeartbeatStatus(w, r)
+	s.writeUptimyStatus(w, r)
 }
 
-// disconnectHeartbeat stops checking in. For an account connection it also
-// deletes the heartbeat in Uptimy (so it doesn't alert) and revokes the agent
-// key. If Uptimy can't be reached, the agent disconnects anyway and says so.
-func (s *Server) disconnectHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if s.rejectIfEnvManaged(w) {
-		return
-	}
+// disconnectUptimy removes everything the connection made in Uptimy (the
+// location, its mirrored monitors and check-in) and revokes the agent key. If
+// Uptimy can't be reached, the agent disconnects anyway and says so.
+func (s *Server) disconnectUptimy(w http.ResponseWriter, r *http.Request) {
 	var warning string
 	conn, err := s.Store.UptimyConnection(r.Context())
 	if err != nil {
@@ -309,15 +255,10 @@ func (s *Server) disconnectHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	if conn != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		client := connect.NewClient(s.Config.UptimyAPIURL, s.Config.UptimyHeartbeatsURL)
-		if conn.LocationUUID != "" {
-			// Cloud sync: the location, mirrored monitors and check-in.
-			if err := s.Sync.Disconnect(ctx, conn); err != nil {
-				warning = "Disconnected, but " + err.Error() + "."
-			}
-		} else if err := client.DeleteHeartbeat(ctx, conn.APIKey, conn.HeartbeatUUID); err != nil {
-			warning = "Disconnected, but the heartbeat couldn't be removed from Uptimy (" + err.Error() + "). Delete it there so it doesn't alert."
+		if err := s.Sync.Disconnect(ctx, conn); err != nil {
+			warning = "Disconnected, but " + err.Error() + "."
 		}
+		client := connect.NewClient(s.Config.UptimyAPIURL, s.Config.UptimyHeartbeatsURL)
 		if err := client.RevokeKey(ctx, conn.APIKey); err != nil && warning == "" {
 			warning = "Disconnected, but the agent key couldn't be revoked (" + err.Error() + "). Revoke it under Settings → API Keys in Uptimy."
 		}
@@ -327,27 +268,19 @@ func (s *Server) disconnectHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	s.Watchdog.SetURL("")
-	resp, err := s.heartbeatStatusFor(r)
+	resp, err := s.uptimyStatusFor(r)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
-		heartbeatStatusResponse
+		uptimyStatusResponse
 		Warning string `json:"warning,omitempty"`
 	}{resp, warning})
 }
 
-func (s *Server) testHeartbeat(w http.ResponseWriter, r *http.Request) {
-	// With the Cloud sync, an upload is the check-in: run one now.
-	if conn, err := s.Store.UptimyConnection(r.Context()); err == nil && conn != nil && conn.LocationUUID != "" {
-		s.Sync.Trigger()
-		s.writeHeartbeatStatus(w, r)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	_ = s.Watchdog.PingNow(ctx) // the outcome is recorded in the status returned below
-	s.writeHeartbeatStatus(w, r)
+// uploadNow runs a sync cycle right away (it also checks the agent in).
+func (s *Server) uploadNow(w http.ResponseWriter, r *http.Request) {
+	s.Sync.Trigger()
+	s.writeUptimyStatus(w, r)
 }

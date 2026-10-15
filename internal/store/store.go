@@ -290,7 +290,9 @@ var migrations = []string{
 		cloud_uuid TEXT NOT NULL,
 		hash TEXT NOT NULL
 	);
-	DELETE FROM notifiers WHERE type = 'uptimy';`,
+	DELETE FROM notifiers WHERE type = 'uptimy';
+	-- Pasted check-in URLs are gone too: connecting is Connect to Uptimy Cloud.
+	DELETE FROM settings WHERE key = 'uptimy_heartbeat_url';`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

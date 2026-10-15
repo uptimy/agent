@@ -252,7 +252,7 @@ func TestConnectToUptimy(t *testing.T) {
 	code, body := c.do("POST", "/api/uptimy/connect/finish", map[string]string{"state": state, "code": uptimy.approve("upt_agent1")})
 	// The Cloud sync takes over: the agent is a location, and its uploads
 	// check it in (the old ping URL is off).
-	if sync, _ := body["sync"].(map[string]any); code != 200 || sync == nil || sync["active"] != true || sync["location_uuid"] != "loc-1" || body["enabled"] != false {
+	if sync, _ := body["sync"].(map[string]any); code != 200 || sync == nil || sync["active"] != true || sync["location_uuid"] != "loc-1" || body["connected"] != true {
 		t.Fatalf("finish: %d %v", code, body)
 	}
 	if acct, _ := body["account"].(map[string]any); acct == nil || acct["workspace_name"] != "Acme" || acct["connected_by"] != "admin" {
@@ -277,7 +277,7 @@ func TestConnectToUptimy(t *testing.T) {
 	v := c.another()
 	v.login("vic", "temp-pass-1")
 	v.do("POST", "/api/auth/password", map[string]string{"current": "temp-pass-1", "new": "vics-password"})
-	if code, body := v.do("GET", "/api/uptimy/heartbeat", nil); code != 200 || body["url"] != nil || body["account"] == nil {
+	if code, body := v.do("GET", "/api/uptimy", nil); code != 200 || body["account"] == nil || body["connected"] != true {
 		t.Fatalf("viewer status: %d %v", code, body)
 	}
 	if code, _ := v.do("POST", "/api/uptimy/connect/start", map[string]string{"origin": "https://agent.acme.test"}); code != 403 {
@@ -295,8 +295,8 @@ func TestConnectToUptimy(t *testing.T) {
 	}
 
 	// Disconnect deletes the location, the heartbeat and the key.
-	code, body = c.do("DELETE", "/api/uptimy/heartbeat", nil)
-	if code != 200 || body["enabled"] != false || body["account"] != nil || body["warning"] != nil {
+	code, body = c.do("DELETE", "/api/uptimy", nil)
+	if code != 200 || body["connected"] != false || body["account"] != nil || body["warning"] != nil {
 		t.Fatalf("disconnect: %d %v", code, body)
 	}
 	if !uptimy.locationDeleted || len(uptimy.deleted) != 1 || uptimy.deleted[0] != firstHeartbeat || uptimy.keys["upt_agent2"] != "" {
@@ -320,8 +320,8 @@ func TestDisconnectWhenUptimyIsDown(t *testing.T) {
 	uptimy.mu.Lock()
 	uptimy.down = true
 	uptimy.mu.Unlock()
-	code, body := c.do("DELETE", "/api/uptimy/heartbeat", nil)
-	if code != 200 || body["enabled"] != false {
+	code, body := c.do("DELETE", "/api/uptimy", nil)
+	if code != 200 || body["connected"] != false {
 		t.Fatalf("should still disconnect locally: %d %v", code, body)
 	}
 	if w, _ := body["warning"].(string); !strings.Contains(w, "Settings → Agents") {

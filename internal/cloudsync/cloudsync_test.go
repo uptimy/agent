@@ -133,11 +133,10 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 type env struct {
-	st      *store.Store
-	cloud   *fakeCloud
-	s       *Syncer
-	stopped bool
-	now     time.Time
+	st    *store.Store
+	cloud *fakeCloud
+	s     *Syncer
+	now   time.Time
 }
 
 func newEnv(t *testing.T) *env {
@@ -151,9 +150,9 @@ func newEnv(t *testing.T) *env {
 		c := connect.NewClient(e.cloud.URL, e.cloud.URL)
 		c.IngestURL = e.cloud.URL
 		return c
-	}, "homelab", "0.3.0", slog.New(slog.NewTextHandler(io.Discard, nil)), func() { e.stopped = true })
+	}, "homelab", "0.3.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	e.s.now = func() time.Time { return e.now }
-	if err := st.SaveUptimyConnection(context.Background(), connect.Connection{APIKey: "upt_agent", ConnectedAt: e.now}, "https://heartbeats.example/v1/monitors/x"); err != nil {
+	if err := st.SaveUptimyConnection(context.Background(), connect.Connection{APIKey: "upt_agent", ConnectedAt: e.now}); err != nil {
 		t.Fatal(err)
 	}
 	return e
@@ -200,11 +199,8 @@ func TestFirstCycleSetsUpMirrorsAndUploads(t *testing.T) {
 	}
 
 	conn, _ := e.st.UptimyConnection(ctx)
-	if conn.LocationUUID != "loc-1" || conn.UploadIntervalSeconds != 60 || !e.stopped {
-		t.Fatalf("connection %+v, check-in stopped %v", conn, e.stopped)
-	}
-	if url, _ := e.st.HeartbeatURL(ctx); url != "" {
-		t.Fatalf("old check-in URL kept: %q", url)
+	if conn.LocationUUID != "loc-1" || conn.UploadIntervalSeconds != 60 {
+		t.Fatalf("connection %+v", conn)
 	}
 	installID, _ := e.st.InstallID(ctx)
 	liveness := e.cloud.heartbeats["hb-"+installID]
@@ -333,8 +329,8 @@ func TestAgentLimitStopsSetUp(t *testing.T) {
 	if err := e.s.SetUp(context.Background(), conn); !errors.Is(err, connect.ErrAgentLimit) {
 		t.Fatalf("err %v, want ErrAgentLimit", err)
 	}
-	if e.stopped {
-		t.Fatal("the old check-in was stopped although the sync couldn't take over")
+	if !e.s.Status().OverPlan {
+		t.Fatalf("status %+v, want over plan", e.s.Status())
 	}
 }
 

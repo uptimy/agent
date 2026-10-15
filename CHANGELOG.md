@@ -16,10 +16,8 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 - Webhook alerts carry an `id` that's the same on every attempt, and reminders and acknowledgements a `type`.
 - The Uptime Kuma importer points out monitors that re-sent their alerts while down, so you can turn on reminders.
 
-### Changed
-- **Watch the watcher** is now part of **Connect to Uptimy Cloud**: an existing connection is moved over on the first start, keeping its heartbeat and history. The agent checks in with every upload (your plan's check interval) instead of every minute, and Uptimy alerts after two missed uploads unless you chose a longer delay. A pasted heartbeat URL or `UPTIMY_HEARTBEAT_URL` keeps working as before.
-
 ### Removed
+- **Watch the watcher** as a separate heartbeat: it's part of **Connect to Uptimy Cloud** now, which checks the agent in with every upload (your plan's check interval) and alerts after two missed uploads unless you choose a longer delay. Pasting a heartbeat URL and `UPTIMY_HEARTBEAT_URL` (Helm `uptimy.heartbeatUrl`) are gone; an agent that was checking in with one isn't watched until you connect it.
 - The **Uptimy** alert channel. Connect to Uptimy Cloud instead: agent monitors become real Uptimy monitors, whose outages open incidents there. Existing Uptimy channels are deleted on upgrade (Uptimy stopped accepting them on 2026-10-14).
 
 ### Fixed

@@ -137,7 +137,7 @@ func TestPauseAlerts(t *testing.T) {
 	if code != 200 || body["paused"] != true || !hb.paused {
 		t.Fatalf("pause: %d %v", code, body)
 	}
-	if _, status := c.do("GET", "/api/uptimy/heartbeat", nil); status["paused"] != true {
+	if _, status := c.do("GET", "/api/uptimy", nil); status["paused"] != true {
 		t.Fatalf("pause not shown: %v", status)
 	}
 	// The pause survives a restart.
@@ -155,17 +155,14 @@ func TestPauseAlerts(t *testing.T) {
 	hb.paused = true
 	uptimy.mu.Unlock()
 	c.do("GET", "/api/uptimy/heartbeat/settings", nil)
-	if _, status := c.do("GET", "/api/uptimy/heartbeat", nil); status["paused"] != true {
+	if _, status := c.do("GET", "/api/uptimy", nil); status["paused"] != true {
 		t.Fatalf("pause from Uptimy not picked up: %v", status)
 	}
 }
 
 func TestHeartbeatSettingsWithoutAccount(t *testing.T) {
-	uptimy := newFakeUptimy(t)
-	c, _ := newTestServerWithConfig(t, config.Config{UptimyHeartbeatsURL: uptimy.URL})
+	c := newTestServer(t)
 	c.login("admin", adminPassword)
-	// A pasted heartbeat URL gives the agent no access to the settings.
-	c.do("PUT", "/api/uptimy/heartbeat", map[string]string{"url": uptimy.URL + "/v1/monitors/pub-manual"})
 	code, body := c.do("GET", "/api/uptimy/heartbeat/settings", nil)
 	if code != 200 || body["available"] != false {
 		t.Fatalf("settings without an account: %d %v", code, body)

@@ -1,7 +1,5 @@
 # Used by CI to render the chart with every optional part switched on.
 adminPassword: ci-only
-uptimy:
-  heartbeatUrl: https://heartbeat.example.com/ping/ci
 healthchecks:
   - name: Checkout API
     type: http

@@ -96,8 +96,6 @@ ingress:
 | `adminPassword` | `""` | Password for `admin`; empty prints a random one to the log |
 | `existingSecret` | `""` | Secret with key `ADMIN_PASSWORD` instead of `adminPassword` |
 | `agentName` | release name | How the agent is labeled in Uptimy |
-| `uptimy.heartbeatUrl` | `""` | Pin an Uptimy check-in URL (usually you'd use "Connect to Uptimy Cloud" in the UI instead) |
-| `uptimy.existingSecret` | `""` | Secret with key `UPTIMY_HEARTBEAT_URL` |
 | `healthchecks` / `heartbeats` | `[]` | Monitors defined in values |
 | `retentionDays` | `30` | How long check results are kept |
 | `trustedProxies` | `private` | Proxies whose `X-Forwarded-For`/`-Proto` headers are believed: `private`, addresses or CIDRs, or `none` |

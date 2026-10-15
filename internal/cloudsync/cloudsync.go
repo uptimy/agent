@@ -62,8 +62,6 @@ type Syncer struct {
 	AgentName string
 	Version   string
 	Log       *slog.Logger
-	// StopCheckIn turns the old check-in pings off once uploads take over.
-	StopCheckIn func()
 
 	wake chan struct{}
 	now  func() time.Time
@@ -82,9 +80,9 @@ type sent struct {
 }
 
 // New returns a syncer; Run starts it.
-func New(st *store.Store, client func() *connect.Client, agentName, version string, log *slog.Logger, stopCheckIn func()) *Syncer {
+func New(st *store.Store, client func() *connect.Client, agentName, version string, log *slog.Logger) *Syncer {
 	return &Syncer{
-		Store: st, Client: client, AgentName: agentName, Version: version, Log: log, StopCheckIn: stopCheckIn,
+		Store: st, Client: client, AgentName: agentName, Version: version, Log: log,
 		wake: make(chan struct{}, 1), now: time.Now, lastSent: map[int64]sent{},
 	}
 }
@@ -269,8 +267,8 @@ func (s *Syncer) Disconnect(ctx context.Context, conn *connect.Connection) error
 	return nil
 }
 
-// setup registers the agent's location and turns its check-in heartbeat into
-// the location's liveness heartbeat, checked in by every upload.
+// setup registers the agent's location and its check-in heartbeat
+// (agent_liveness), which every upload checks in.
 func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connect.Connection) error {
 	installID, err := s.Store.InstallID(ctx)
 	if err != nil {
@@ -302,8 +300,9 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 	if err != nil {
 		return fmt.Errorf("setting up the agent's check-in in Uptimy: %w", err)
 	}
-	// An existing check-in heartbeat keeps its settings: give it the upload
-	// interval and keep its alert delay, at least two missed uploads.
+	// A reclaimed check-in heartbeat (reconnecting) keeps its settings: give
+	// it the current upload interval and keep its alert delay, at least two
+	// missed uploads.
 	if conn.MaintenanceUntil == nil {
 		if hs, err := client.GetHeartbeatSettings(ctx, conn.APIKey, hb.UUID); err == nil && hs.IntervalSeconds != interval {
 			grace := max(interval, int(hs.AlertAfter().Seconds())-interval)
@@ -317,12 +316,8 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 	}
 
 	conn.LocationUUID, conn.UploadIntervalSeconds, conn.HeartbeatUUID = loc.UUID, interval, hb.UUID
-	// The check-in heartbeat no longer takes pings: uploads check in now.
-	if err := s.Store.SaveUptimyConnection(ctx, *conn, ""); err != nil {
+	if err := s.Store.SaveUptimyConnection(ctx, *conn); err != nil {
 		return err
-	}
-	if s.StopCheckIn != nil {
-		s.StopCheckIn()
 	}
 	if _, _, ok, err := s.Store.SyncCursors(ctx); err != nil {
 		return err

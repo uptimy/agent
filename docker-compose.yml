@@ -9,9 +9,6 @@ services:
       # Optional. Without it, the admin password is printed once in the logs
       # (docker compose logs) and must be changed at first sign-in.
       # ADMIN_PASSWORD: change-me
-      # Optional. "Watch the watcher" can be connected from Settings in the UI;
-      # set this only to pin it in config.
-      # UPTIMY_HEARTBEAT_URL: https://heartbeats.upti.my/v1/monitors/<token>
       MONITORS_FILE: /config/monitors.yaml
     volumes:
       - uptimy-agent-data:/data

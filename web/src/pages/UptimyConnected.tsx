@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, XCircle } from "lucide-react";
-import { api, type UptimyCheckIn } from "@/lib/api";
+import { api, type UptimyStatus } from "@/lib/api";
 import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { UptimyMark } from "@/components/brand";
@@ -29,7 +29,7 @@ const handoff: Handoff | null = (() => {
 
 // The handoff can only be used once (the agent consumes the state), so share
 // one request between StrictMode's duplicate effects.
-let finishing: Promise<UptimyCheckIn> | null = null;
+let finishing: Promise<UptimyStatus> | null = null;
 
 type Outcome =
   | { kind: "working" }

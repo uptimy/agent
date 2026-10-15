@@ -13,12 +13,6 @@ existingSecret: ""         # Secret with key ADMIN_PASSWORD
 # (the pod's hostname would change on every restart).
 agentName: ""
 
-# Optional: "Connect to Uptimy" in the agent's Settings does this with one
-# click. Set heartbeatUrl only to pin it in config (read-only in the UI).
-uptimy:
-  heartbeatUrl: ""
-  existingSecret: ""       # Secret with key UPTIMY_HEARTBEAT_URL
-
 # Declarative monitors, rendered into a ConfigMap. Same schema as
 # examples/monitors.yaml. Leave both empty to manage monitors in the UI only.
 healthchecks: []

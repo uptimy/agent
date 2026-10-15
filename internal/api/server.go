@@ -13,7 +13,6 @@ import (
 
 	"github.com/uptimy/agent/internal/cloudsync"
 	"github.com/uptimy/agent/internal/config"
-	"github.com/uptimy/agent/internal/connect"
 	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/discovery"
 	"github.com/uptimy/agent/internal/events"
@@ -33,7 +32,6 @@ type Server struct {
 	Alerts    *delivery.Dispatcher
 	Hub       *events.Hub
 	Log       *slog.Logger
-	Watchdog  *connect.Watchdog
 	// Sync is the Uptimy Cloud sync for "Connect to Uptimy Cloud".
 	Sync          *cloudsync.Syncer
 	KubeAvailable bool
@@ -126,10 +124,9 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	auth("POST /api/alerts/{alert}/deliveries/{notifier}/retry", s.retryDelivery)
 	auth("GET /api/activity", s.activity)
 
-	auth("GET /api/uptimy/heartbeat", s.heartbeatStatus)
-	auth("PUT /api/uptimy/heartbeat", s.connectHeartbeat)
-	auth("DELETE /api/uptimy/heartbeat", s.disconnectHeartbeat)
-	auth("POST /api/uptimy/heartbeat/test", s.testHeartbeat)
+	auth("GET /api/uptimy", s.uptimyStatus)
+	auth("DELETE /api/uptimy", s.disconnectUptimy)
+	auth("POST /api/uptimy/upload", s.uploadNow)
 	auth("GET /api/uptimy/heartbeat/settings", s.getHeartbeatSettings)
 	auth("PUT /api/uptimy/heartbeat/settings", s.updateHeartbeatSettings)
 	auth("POST /api/uptimy/heartbeat/maintenance", s.startUptimyMaintenance)
@@ -249,11 +246,16 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	conn, err := s.Store.UptimyConnection(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":             s.Version,
 		"kubernetes":          s.KubeAvailable,
 		"discovery":           s.Discovery != nil,
-		"uptimy_heartbeat":    s.Watchdog.Status().Enabled,
+		"uptimy_connected":    conn != nil,
 		"status_page_enabled": sp.Enabled,
 		"status_page_title":   sp.Title,
 		"monitors_file":       s.Config.MonitorsFile != "" || s.Config.MonitorsYAML != "",

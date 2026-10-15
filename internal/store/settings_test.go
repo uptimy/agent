@@ -77,7 +77,7 @@ func TestUptimySettings(t *testing.T) {
 		t.Fatalf("connection before connecting: %+v %v", c, err)
 	}
 	conn := connect.Connection{APIKey: "upt_key", WorkspaceName: "Acme", HeartbeatUUID: "hb-1"}
-	if err := st.SaveUptimyConnection(ctx, conn, "https://heartbeats.example/v1/monitors/tok"); err != nil {
+	if err := st.SaveUptimyConnection(ctx, conn); err != nil {
 		t.Fatal(err)
 	}
 	conn.Paused = true
@@ -87,17 +87,12 @@ func TestUptimySettings(t *testing.T) {
 	if c, _ := st.UptimyConnection(ctx); c == nil || c.WorkspaceName != "Acme" || !c.Paused {
 		t.Fatalf("connection: %+v", c)
 	}
-	if u, _ := st.HeartbeatURL(ctx); u != "https://heartbeats.example/v1/monitors/tok" {
-		t.Fatalf("url: %q", u)
-	}
 
 	if err := st.DisconnectUptimy(ctx); err != nil {
 		t.Fatal(err)
 	}
-	c, _ := st.UptimyConnection(ctx)
-	u, _ := st.HeartbeatURL(ctx)
-	if c != nil || u != "" {
-		t.Fatalf("still connected: %+v %q", c, u)
+	if c, _ := st.UptimyConnection(ctx); c != nil {
+		t.Fatalf("still connected: %+v", c)
 	}
 	if again, _ := st.InstallID(ctx); again != id {
 		t.Fatal("disconnecting must keep the install ID, so reconnecting reuses the heartbeat")

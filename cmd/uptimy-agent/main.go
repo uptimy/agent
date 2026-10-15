@@ -120,38 +120,23 @@ func run(log *slog.Logger) error {
 		}, sched.Report)
 	}
 
-	// Watch the watcher: UPTIMY_HEARTBEAT_URL wins; otherwise use the URL
-	// connected from Settings in the UI, which can change at runtime.
-	heartbeatURL := cfg.UptimyHeartbeatURL
-	if heartbeatURL == "" {
-		if heartbeatURL, err = st.HeartbeatURL(ctx); err != nil {
-			return fmt.Errorf("load heartbeat setting: %w", err)
-		}
-	}
-	watchdog := connect.NewWatchdog(heartbeatURL, cfg.UptimyHeartbeatURL != "", connect.CheckInInterval, version, sched.Counts, log)
-	if heartbeatURL != "" {
-		log.Info("uptimy heartbeat enabled", "interval", connect.CheckInInterval)
-	}
 	go prune(ctx, st, cfg.RetentionDays, log)
 
-	// Uptimy Cloud sync, for "Connect to Uptimy Cloud" connections: its
-	// uploads are also the agent's check-in, so it turns the watchdog off
-	// once it has set the connection up.
+	// Uptimy Cloud sync, for a "Connect to Uptimy Cloud" connection: its
+	// uploads are also the agent's check-in.
 	syncer := cloudsync.New(st, func() *connect.Client {
 		c := connect.NewClient(cfg.UptimyAPIURL, cfg.UptimyHeartbeatsURL)
 		c.IngestURL = strings.TrimRight(cfg.UptimyIngestURL, "/")
 		return c
-	}, cfg.AgentName, version, log, func() { watchdog.SetURL("") })
+	}, cfg.AgentName, version, log)
 	go syncer.Run(ctx)
 	go syncer.Watch(ctx, hub.Subscribe)
 
 	srv := &api.Server{
 		Config: cfg, Version: version, Store: st, Scheduler: sched,
-		Sender: sender, Alerts: alerts, Hub: hub, Log: log, Watchdog: watchdog, KubeAvailable: kc != nil, Discovery: disc,
+		Sender: sender, Alerts: alerts, Hub: hub, Log: log, KubeAvailable: kc != nil, Discovery: disc,
 		Sync: syncer,
 	}
-	srv.RestorePaused(ctx)
-	go watchdog.Run(ctx)
 	go srv.RunUptimyMaintenance(ctx)
 	ui, err := web.Handler(cfg.UIDevServer)
 	if err != nil {

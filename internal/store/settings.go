@@ -15,10 +15,7 @@ import (
 // Settings that aren't rows of their own (the status page, the Uptimy
 // connection) are kept as JSON in the settings table, under these keys.
 const (
-	keyStatusPage = "status_page"
-	// keyHeartbeatURL is the URL the agent checks in to for "Watch the
-	// watcher", whether it was pasted or created by "Connect to Uptimy".
-	keyHeartbeatURL      = "uptimy_heartbeat_url"
+	keyStatusPage        = "status_page"
 	keyUptimyConnection  = "uptimy_connection"
 	keyInstallID         = "install_id"
 	keyStatusPageLogoFmt = "status_page_logo_" // + variant
@@ -129,17 +126,6 @@ func (s *Store) SetStatusPageLogo(ctx context.Context, v statuspage.Variant, l *
 
 // ── Uptimy ("Watch the watcher") ──────────────────────────────────────────
 
-// HeartbeatURL returns the URL the agent checks in to, or "".
-func (s *Store) HeartbeatURL(ctx context.Context) (string, error) {
-	u, _, err := s.getSetting(ctx, keyHeartbeatURL)
-	return u, err
-}
-
-// SetHeartbeatURL sets a pasted check-in URL.
-func (s *Store) SetHeartbeatURL(ctx context.Context, url string) error {
-	return setSetting(ctx, s.db, keyHeartbeatURL, url)
-}
-
 // UptimyConnection returns the account connection, or nil if there is none.
 func (s *Store) UptimyConnection(ctx context.Context) (*connect.Connection, error) {
 	var c connect.Connection
@@ -150,15 +136,9 @@ func (s *Store) UptimyConnection(ctx context.Context) (*connect.Connection, erro
 	return &c, nil
 }
 
-// SaveUptimyConnection stores the account connection and its heartbeat's
-// check-in URL.
-func (s *Store) SaveUptimyConnection(ctx context.Context, c connect.Connection, url string) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if err := setJSON(ctx, tx, keyUptimyConnection, c); err != nil {
-			return err
-		}
-		return setSetting(ctx, tx, keyHeartbeatURL, url)
-	})
+// SaveUptimyConnection stores the account connection.
+func (s *Store) SaveUptimyConnection(ctx context.Context, c connect.Connection) error {
+	return setJSON(ctx, s.db, keyUptimyConnection, c)
 }
 
 // UpdateUptimyConnection stores a changed connection, e.g. paused or in
@@ -167,14 +147,9 @@ func (s *Store) UpdateUptimyConnection(ctx context.Context, c connect.Connection
 	return setJSON(ctx, s.db, keyUptimyConnection, c)
 }
 
-// DisconnectUptimy forgets the check-in URL and any account connection.
+// DisconnectUptimy forgets the account connection.
 func (s *Store) DisconnectUptimy(ctx context.Context) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if err := deleteSetting(ctx, tx, keyUptimyConnection); err != nil {
-			return err
-		}
-		return deleteSetting(ctx, tx, keyHeartbeatURL)
-	})
+	return deleteSetting(ctx, s.db, keyUptimyConnection)
 }
 
 // InstallID is this agent's permanent identity towards Uptimy, created on
