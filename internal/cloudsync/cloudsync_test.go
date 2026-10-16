@@ -30,6 +30,7 @@ type fakeCloud struct {
 	statusChange int
 	sample       int
 	locationPuts int
+	hcPuts       int
 	healthchecks map[string]connect.MirroredHealthcheck // clientRef -> last PUT
 	heartbeats   map[string]map[string]any              // uuid -> body
 	deleted      []string
@@ -79,6 +80,7 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 		var h connect.MirroredHealthcheck
 		_ = json.Unmarshal(raw, &h)
 		f.healthchecks[ref] = h
+		f.hcPuts++
 		reply(http.StatusOK, map[string]any{"clientRef": ref, "healthcheckUuid": "uuid-" + ref, "applicationUuid": "app-" + ref})
 	case r.Method == http.MethodGet && path == "/v1/api/agent/healthchecks":
 		var out []map[string]any
@@ -122,6 +124,12 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Retry-After", f.retryAfter)
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = w.Write([]byte(`{"code":"BACKPRESSURE.429","error":"slow down"}`))
+			return
+		}
+		if f.uploadStatus == http.StatusConflict {
+			f.uploadStatus = 0 // set up again, it takes uploads
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"AGENT_LOCATION.409","error":"no location"}`))
 			return
 		}
 		if f.uploadStatus == http.StatusForbidden {
@@ -187,6 +195,20 @@ func TestFirstCycleSetsUpMirrorsAndUploads(t *testing.T) {
 	db := e.monitor(t, healthcheck("db", "postgres", "postgres://app:s3cret@db:5432/app"))
 	hb := e.monitor(t, monitor.Monitor{Kind: monitor.KindHeartbeat, Name: "backup", Heartbeat: &monitor.Heartbeat{Token: "tok-backup-0123456789", EverySeconds: 3600, GraceSeconds: 300}})
 
+	// History from before connecting stays here: it would open incidents in
+	// Cloud that are long over.
+	old := e.now.Add(-time.Hour)
+	_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: db.ID, Time: old, OK: false})
+	if _, err := e.st.InsertRun(ctx, monitor.Run{MonitorID: hb.ID, FinishedAt: &old, Outcome: monitor.OutcomeFailure}); err != nil {
+		t.Fatal(err)
+	}
+	if wait := e.s.cycle(ctx); wait != time.Minute {
+		t.Fatalf("waits %s, want the upload interval", wait)
+	}
+	if len(e.cloud.uploads) != 1 || len(e.cloud.uploads[0].Healthchecks)+len(e.cloud.uploads[0].Heartbeats) != 0 {
+		t.Fatalf("first upload %+v, want only the check-in", e.cloud.uploads)
+	}
+
 	at := e.now.Add(-10 * time.Minute)
 	for i, ok := range []bool{true, false, false} {
 		if err := e.st.InsertResult(ctx, monitor.Result{MonitorID: db.ID, Time: at.Add(time.Duration(i) * time.Minute), OK: ok, LatencyMS: 4, Message: "refused"}); err != nil {
@@ -201,9 +223,7 @@ func TestFirstCycleSetsUpMirrorsAndUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if wait := e.s.cycle(ctx); wait != time.Minute {
-		t.Fatalf("waits %s, want the upload interval", wait)
-	}
+	e.s.cycle(ctx)
 
 	conn, _ := e.st.UptimyConnection(ctx)
 	if conn.LocationUUID != "loc-1" || conn.UploadIntervalSeconds != 60 || conn.StatusChangeIntervalSeconds != 10 || conn.SampleIntervalSeconds != 300 {
@@ -223,10 +243,10 @@ func TestFirstCycleSetsUpMirrorsAndUploads(t *testing.T) {
 		t.Fatalf("healthcheck mirror %+v (the password must not leave the agent)", h)
 	}
 
-	if len(e.cloud.uploads) != 1 {
+	if len(e.cloud.uploads) != 2 {
 		t.Fatalf("%d uploads", len(e.cloud.uploads))
 	}
-	u := e.cloud.uploads[0]
+	u := e.cloud.uploads[1]
 	var statuses []string
 	for _, i := range u.Healthchecks {
 		statuses = append(statuses, i.Status)
@@ -240,8 +260,8 @@ func TestFirstCycleSetsUpMirrorsAndUploads(t *testing.T) {
 
 	// Nothing new: the next cycle still uploads (the agent's check-in), empty.
 	e.s.cycle(ctx)
-	if len(e.cloud.uploads) != 2 || len(e.cloud.uploads[1].Healthchecks)+len(e.cloud.uploads[1].Heartbeats) != 0 {
-		t.Fatalf("second upload %+v", e.cloud.uploads[1:])
+	if len(e.cloud.uploads) != 3 || len(e.cloud.uploads[2].Healthchecks)+len(e.cloud.uploads[2].Heartbeats) != 0 {
+		t.Fatalf("third upload %+v", e.cloud.uploads[2:])
 	}
 }
 
@@ -305,6 +325,12 @@ func TestRunningRunDoesNotHoldUpOthers(t *testing.T) {
 	}
 }
 
+func (e *env) lastUpload() connect.Upload {
+	e.cloud.mu.Lock()
+	defer e.cloud.mu.Unlock()
+	return e.cloud.uploads[len(e.cloud.uploads)-1]
+}
+
 func (e *env) mirror(t *testing.T, monitorID int64) string {
 	t.Helper()
 	cloud, err := e.st.CloudMonitors(context.Background())
@@ -320,13 +346,14 @@ func TestResultCarriesTheStatusItCaused(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	e.s.cycle(ctx)
 	started := e.now.Add(-time.Minute)
 	_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: started, OK: false, LatencyMS: 3000})
 	if _, err := e.st.InsertEvent(ctx, monitor.Event{MonitorID: api.ID, Time: started.Add(3050 * time.Millisecond), Status: monitor.StatusDown}); err != nil {
 		t.Fatal(err)
 	}
 	e.s.cycle(ctx)
-	if got := e.cloud.uploads[0].Healthchecks; len(got) != 1 || got[0].Status != "down" {
+	if got := e.lastUpload().Healthchecks; len(got) != 1 || got[0].Status != "down" {
 		t.Fatalf("uploaded %+v, want the result that took it down marked down", got)
 	}
 }
@@ -337,6 +364,7 @@ func TestUploadsCarryStatusCodeAndErrorClass(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	e.s.cycle(ctx)
 	at := e.now.Add(-2 * time.Minute)
 	_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: at, OK: true, LatencyMS: 12, StatusCode: 200, ErrorClass: "stale"})
 	_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: at.Add(time.Minute), LatencyMS: 40, Message: "unexpected status 503", StatusCode: 503, ErrorClass: "http_5xx"})
@@ -344,7 +372,7 @@ func TestUploadsCarryStatusCodeAndErrorClass(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.s.cycle(ctx)
-	got := e.cloud.uploads[0].Healthchecks
+	got := e.lastUpload().Healthchecks
 	if len(got) != 2 {
 		t.Fatalf("uploaded %+v", got)
 	}
@@ -364,6 +392,7 @@ func TestUnchangedResultsAreThinned(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	e.s.cycle(ctx)
 	start := e.now.Add(-13 * time.Minute)
 	// Every 10s for 12 minutes, up but for one failure at 200s: one unchanged
 	// result per 5-minute sample interval, and every status change.
@@ -377,7 +406,7 @@ func TestUnchangedResultsAreThinned(t *testing.T) {
 	}
 	e.s.cycle(ctx)
 	var got []string
-	for _, h := range e.cloud.uploads[0].Healthchecks {
+	for _, h := range e.lastUpload().Healthchecks {
 		got = append(got, h.CheckedAt.Format(time.TimeOnly))
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
@@ -539,6 +568,36 @@ func TestResultsCursorFollowsReusedRowids(t *testing.T) {
 	e.s.cycle(ctx)
 	if last := e.cloud.uploads[len(e.cloud.uploads)-1]; len(last.Healthchecks) != 1 || last.Healthchecks[0].HealthcheckUUID != "uuid-hc-"+itoa(api.ID) {
 		t.Fatalf("last upload %+v, want api's result (rowid 1 again)", last)
+	}
+}
+
+// Cloud losing the agent's location (disconnected there) sets it up again
+// and sends every mirror again, but no history Cloud already had: replaying
+// it would open and resolve old incidents once more.
+func TestLostLocationKeepsTheCursors(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	e.s.cycle(ctx)
+	_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: e.now, OK: false})
+	e.s.cycle(ctx)
+	r0, n0, _, _ := e.st.SyncCursors(ctx)
+	puts := e.cloud.hcPuts
+
+	e.cloud.uploadStatus = http.StatusConflict
+	e.s.cycle(ctx) // 409: the location is forgotten
+	if conn, _ := e.st.UptimyConnection(ctx); conn.LocationUUID != "" {
+		t.Fatalf("connection %+v, want the location forgotten", conn)
+	}
+	e.s.cycle(ctx)
+	if e.cloud.locationPuts != 2 || e.cloud.hcPuts != puts+1 {
+		t.Fatalf("%d set-ups and %d healthcheck PUTs, want the location and the mirror sent again", e.cloud.locationPuts, e.cloud.hcPuts-puts)
+	}
+	if r, n, ok, _ := e.st.SyncCursors(ctx); !ok || r != r0 || n != n0 {
+		t.Fatalf("cursors %d/%d, want %d/%d kept", r, n, r0, n0)
+	}
+	if last := e.lastUpload(); len(last.Healthchecks) != 0 {
+		t.Fatalf("uploaded %+v again", last.Healthchecks)
 	}
 }
 

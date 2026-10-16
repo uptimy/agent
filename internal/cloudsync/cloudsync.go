@@ -253,13 +253,21 @@ func (s *Syncer) failed(err error) time.Duration {
 }
 
 // forgetLocation makes the next cycle register the location again: Cloud
-// has none for this key (it was disconnected there, or set up anew).
+// has none for this key (it was disconnected there, or set up anew). Every
+// mirror is sent again, to the new location. The cursors stay: what Cloud
+// already had isn't sent again, which would open and resolve its old
+// incidents once more.
 func (s *Syncer) forgetLocation(ctx context.Context, conn *connect.Connection) {
+	s.resetUp(ctx, conn)
+	if err := s.Store.MarkCloudMonitorsStale(ctx); err != nil {
+		s.Log.Warn("cloud sync: marking mirrors for resending", "err", err)
+	}
+}
+
+// resetUp makes the next cycle set the location and check-in up again.
+func (s *Syncer) resetUp(ctx context.Context, conn *connect.Connection) {
 	if err := s.updateConnection(ctx, conn, func(c *connect.Connection) { c.LocationUUID = "" }); err != nil {
 		s.Log.Warn("cloud sync: saving the connection", "err", err)
-	}
-	if err := s.Store.ResetCloudSync(ctx); err != nil {
-		s.Log.Warn("cloud sync: resetting", "err", err)
 	}
 }
 
@@ -383,12 +391,13 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 	if _, _, ok, err := s.Store.SyncCursors(ctx); err != nil {
 		return err
 	} else if !ok {
-		// Start with the history Cloud can still take.
-		r, n, err := s.Store.SyncStartCursors(ctx, s.now().Add(-maxAge))
+		// Start now: history from before connecting would open incidents in
+		// Cloud that are long over.
+		r, n, running, err := s.Store.SyncStartCursors(ctx)
 		if err != nil {
 			return err
 		}
-		if err := s.Store.SetSyncCursors(ctx, r, n, nil); err != nil {
+		if err := s.Store.SetSyncCursors(ctx, r, n, running); err != nil {
 			return err
 		}
 	}
@@ -729,7 +738,7 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	if res.UploadIntervalSeconds > 0 && res.UploadIntervalSeconds != conn.UploadIntervalSeconds {
 		// The plan changed: set the check-in heartbeat up for the new interval.
 		s.Log.Info("cloud sync: upload interval changed", "from_s", conn.UploadIntervalSeconds, "to_s", res.UploadIntervalSeconds)
-		s.forgetLocation(ctx, conn)
+		s.resetUp(ctx, conn)
 		return false, nil
 	}
 	newStatusChange, newSample := conn.StatusChangeIntervalSeconds, conn.SampleIntervalSeconds

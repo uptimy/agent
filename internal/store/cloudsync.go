@@ -67,8 +67,15 @@ func (s *Store) DeleteCloudMonitor(ctx context.Context, monitorID int64) error {
 	return err
 }
 
+// MarkCloudMonitorsStale makes the next reconcile send every mirror again,
+// e.g. to a new location.
+func (s *Store) MarkCloudMonitorsStale(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE cloud_monitors SET hash = ''")
+	return err
+}
+
 // ResetCloudSync forgets every mirror and both cursors, on disconnect: a
-// later connection mirrors and uploads from scratch.
+// later connection mirrors anew and uploads from when it was made.
 func (s *Store) ResetCloudSync(ctx context.Context) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM cloud_monitors"); err != nil {
@@ -124,15 +131,29 @@ func (s *Store) SetSyncCursors(ctx context.Context, results, runs int64, running
 	})
 }
 
-// SyncStartCursors are where a new connection starts uploading: the last
-// result and run older than since, so Cloud gets the recent history.
-func (s *Store) SyncStartCursors(ctx context.Context, since time.Time) (results, runs int64, err error) {
-	ms := since.UnixMilli()
-	if err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(rowid), 0) FROM results WHERE ts < ?", ms).Scan(&results); err != nil {
-		return 0, 0, err
+// SyncStartCursors are where a new connection starts uploading: after the
+// newest result and run, with the runs still running, which finish after
+// connecting.
+func (s *Store) SyncStartCursors(ctx context.Context) (results, runs int64, running []int64, err error) {
+	if results, err = s.MaxResultRowID(ctx); err != nil {
+		return 0, 0, nil, err
 	}
-	err = s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(id), 0) FROM runs WHERE ts < ?", ms).Scan(&runs)
-	return results, runs, err
+	if err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(id), 0) FROM runs").Scan(&runs); err != nil {
+		return 0, 0, nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT id FROM runs WHERE outcome = ? ORDER BY id", monitor.OutcomeRunning)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return 0, 0, nil, err
+		}
+		running = append(running, id)
+	}
+	return results, runs, running, rows.Err()
 }
 
 // MaxResultRowID is the newest result's rowid, 0 without results. Rowids
