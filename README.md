@@ -48,6 +48,8 @@ heartbeats:
 
 One small Go binary with its own UI and database. Free, open source, no account needed.
 
+![Dashboard, a healthcheck with a short outage, heartbeats and the public status page](docs/images/agent-tour.gif)
+
 ## Install
 
 ### Docker
@@ -74,7 +76,7 @@ Or with [Docker Compose](docker-compose.yml).
 
 - **Healthchecks:** HTTP, Postgres, MySQL, Redis, TCP, ping, DNS, TLS expiry and Kubernetes workloads
 - **Heartbeats** for cron jobs, backups and workers: missed runs, failures and how long each run took
-- **Alerts** by email, Slack, Teams, Discord, Telegram, ntfy, PagerDuty, webhooks and [30+ more](docs/alerts.md#more-services-shoutrrr), retried until delivered
+- **Alerts** by email, Slack, Teams, Discord, Telegram, ntfy, PagerDuty, webhooks and [30+ more](docs/alerts.md#more-services-shoutrrr), retried for up to an hour if a channel is down
 - **Status page** on your own domain, with incidents, maintenance windows and badges
 - **Monitors as code** in YAML, or from Kubernetes labels, alongside the ones you click together
 - **Light:** a 9 MB image that idles at 8 MiB of memory ([benchmark](bench/uptime-kuma/README.md))
