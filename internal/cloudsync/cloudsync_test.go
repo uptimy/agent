@@ -715,6 +715,35 @@ func TestFullReconcileSendsOnlyWhatsMissing(t *testing.T) {
 	}
 }
 
+// The location gets the agent's name and version when the agent starts and
+// whenever they change, not only when it's set up.
+func TestLocationGetsNameAndVersionOnStart(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.s.cycle(ctx)
+	e.s.cycle(ctx)
+	if e.cloud.locationPuts != 1 {
+		t.Fatalf("%d location PUTs, want one", e.cloud.locationPuts)
+	}
+
+	// A restart: a new syncer on the same database.
+	restarted := New(e.st, e.s.Client, "homelab-2", "0.3.1", e.s.Log)
+	restarted.now = e.s.now
+	restarted.cycle(ctx)
+	restarted.cycle(ctx)
+	if e.cloud.locationPuts != 2 || e.cloud.locationName != "homelab-2" {
+		t.Fatalf("%d location PUTs, name %q, want one more with the new name", e.cloud.locationPuts, e.cloud.locationName)
+	}
+	if conn, _ := e.st.UptimyConnection(ctx); conn.LocationUUID != "loc-1" {
+		t.Fatalf("connection %+v, want the location kept", conn)
+	}
+	restarted.Version = "0.3.2"
+	restarted.cycle(ctx)
+	if e.cloud.locationPuts != 3 {
+		t.Fatalf("%d location PUTs, want one more for the new version", e.cloud.locationPuts)
+	}
+}
+
 // Cloud only shows a mirror's interval and timeout: they're sent within its
 // limits rather than refused. So is the agent's name.
 func TestMirrorsFitCloudsLimits(t *testing.T) {

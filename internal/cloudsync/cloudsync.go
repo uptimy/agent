@@ -113,6 +113,9 @@ type Syncer struct {
 	lastSent map[int64]sent
 	// mirrorErrs are the monitors whose mirror failed, by monitor id.
 	mirrorErrs map[int64]failedMirror
+	// locationSent is the name and version the location was last given
+	// in this process: Cloud gets them on start and whenever they change.
+	locationSent string
 }
 
 type sent struct {
@@ -227,6 +230,15 @@ func (s *Syncer) cycle(ctx context.Context) time.Duration {
 		if err := s.setup(ctx, client, conn); err != nil {
 			return s.failed(err)
 		}
+	} else if s.locationSent != s.locationName()+"|"+s.Version {
+		if err := s.updateLocation(ctx, client, conn); errors.Is(err, connect.ErrNoLocation) {
+			s.forgetLocation(ctx, conn)
+			return 0
+		} else if err != nil && isFatal(err) {
+			return s.failed(err)
+		} else if err != nil {
+			s.Log.Warn("cloud sync: updating the location", "err", err) // tried again next cycle
+		}
 	}
 	interval, statusEvery, _ := intervals(conn)
 	s.mu.Lock()
@@ -331,7 +343,7 @@ func (s *Syncer) Disconnect(ctx context.Context, conn *connect.Connection) error
 		}
 		s.mu.Lock()
 		s.status, s.lastSent, s.lastFull, s.statusEvery = Status{}, map[int64]sent{}, time.Time{}, 0
-		s.mirrorErrs = map[int64]failedMirror{}
+		s.mirrorErrs, s.locationSent = map[int64]failedMirror{}, ""
 		s.mu.Unlock()
 	}()
 	client := s.Client()
@@ -359,7 +371,7 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 	if err != nil {
 		return err
 	}
-	loc, err := client.PutLocation(ctx, conn.APIKey, installID, truncateRunes(s.AgentName, maxLocationName), s.Version)
+	loc, err := client.PutLocation(ctx, conn.APIKey, installID, s.locationName(), s.Version)
 	if errors.Is(err, connect.ErrAgentLimit) {
 		s.update(func(st *Status) {
 			st.OverPlan = true
@@ -428,11 +440,32 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 			return err
 		}
 	}
-	s.lastFull = time.Time{}
+	s.lastFull, s.locationSent = time.Time{}, s.locationName()+"|"+s.Version
 	s.update(func(st *Status) {
 		st.Active, st.LocationUUID, st.UploadIntervalSeconds, st.OverPlan, st.LastError = true, loc.UUID, interval, !loc.WithinPlan, ""
 	})
 	s.Log.Info("cloud sync set up", "location", loc.UUID, "upload_interval_s", interval)
+	return nil
+}
+
+// locationName is the agent's name as Cloud takes it.
+func (s *Syncer) locationName() string { return truncateRunes(s.AgentName, maxLocationName) }
+
+// updateLocation gives the location the agent's current name and version.
+// Cloud answering with another location means it lost this one.
+func (s *Syncer) updateLocation(ctx context.Context, client *connect.Client, conn *connect.Connection) error {
+	installID, err := s.Store.InstallID(ctx)
+	if err != nil {
+		return err
+	}
+	loc, err := client.PutLocation(ctx, conn.APIKey, installID, s.locationName(), s.Version)
+	if err != nil {
+		return err
+	}
+	if loc.UUID != conn.LocationUUID {
+		return connect.ErrNoLocation
+	}
+	s.locationSent = s.locationName() + "|" + s.Version
 	return nil
 }
 
