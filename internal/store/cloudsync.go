@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/uptimy/agent/internal/monitor"
@@ -16,6 +17,10 @@ import (
 const (
 	keySyncResultsCursor = "cloud_sync_results_cursor" // results.rowid
 	keySyncRunsCursor    = "cloud_sync_runs_cursor"    // runs.id
+	// Runs the runs cursor passed while they were running (JSON ids): each
+	// is uploaded once it has finished. A run that finishes is the same row,
+	// updated, so the cursor alone would never see it again.
+	keySyncRunsRunning = "cloud_sync_runs_running"
 )
 
 // CloudMonitor is a monitor mirrored to Cloud.
@@ -69,10 +74,12 @@ func (s *Store) ResetCloudSync(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM cloud_monitors"); err != nil {
 			return err
 		}
-		if err := deleteSetting(ctx, tx, keySyncResultsCursor); err != nil {
-			return err
+		for _, key := range []string{keySyncResultsCursor, keySyncRunsCursor, keySyncRunsRunning} {
+			if err := deleteSetting(ctx, tx, key); err != nil {
+				return err
+			}
 		}
-		return deleteSetting(ctx, tx, keySyncRunsCursor)
+		return nil
 	})
 }
 
@@ -92,13 +99,28 @@ func (s *Store) SyncCursors(ctx context.Context) (results, runs int64, ok bool, 
 	return results, runs, true, nil
 }
 
-// SetSyncCursors records an accepted upload.
-func (s *Store) SetSyncCursors(ctx context.Context, results, runs int64) error {
+// SyncRunningRuns returns the runs at or before the runs cursor that were
+// still running when it passed them.
+func (s *Store) SyncRunningRuns(ctx context.Context) ([]int64, error) {
+	var ids []int64
+	_, err := s.getJSON(ctx, keySyncRunsRunning, &ids)
+	return ids, err
+}
+
+// SetSyncCursors records an accepted upload: the cursors, and the runs
+// before the runs cursor still running.
+func (s *Store) SetSyncCursors(ctx context.Context, results, runs int64, running []int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if err := setSetting(ctx, tx, keySyncResultsCursor, strconv.FormatInt(results, 10)); err != nil {
 			return err
 		}
-		return setSetting(ctx, tx, keySyncRunsCursor, strconv.FormatInt(runs, 10))
+		if err := setSetting(ctx, tx, keySyncRunsCursor, strconv.FormatInt(runs, 10)); err != nil {
+			return err
+		}
+		if running == nil {
+			running = []int64{}
+		}
+		return setJSON(ctx, tx, keySyncRunsRunning, running)
 	})
 }
 
@@ -149,12 +171,28 @@ func (s *Store) ResultsAfter(ctx context.Context, rowid int64, limit int) ([]Res
 	return out, rows.Err()
 }
 
-// RunsAfter returns up to limit runs after id, in id order, stopping before
-// the first run still running: the cursor must not pass a run that hasn't
-// ended, or its outcome would never be uploaded.
+const syncRunColumns = "id, monitor_id, due_at, started_at, finished_at, outcome, on_time, duration_ms, message, ts"
+
+// RunsAfter returns up to limit runs after id, in id order, the ones still
+// running included (the caller keeps them in SetSyncCursors' running).
 func (s *Store) RunsAfter(ctx context.Context, id int64, limit int) ([]monitor.Run, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, monitor_id, due_at, started_at, finished_at, outcome, on_time, duration_ms, message, ts
-		FROM runs WHERE id > ? ORDER BY id LIMIT ?`, id, limit)
+	return s.syncRuns(ctx, "SELECT "+syncRunColumns+" FROM runs WHERE id > ? ORDER BY id LIMIT ?", id, limit)
+}
+
+// RunsByID returns the runs with these ids that still exist, in id order.
+func (s *Store) RunsByID(ctx context.Context, ids []int64) ([]monitor.Run, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return s.syncRuns(ctx, "SELECT "+syncRunColumns+" FROM runs WHERE id IN (?"+strings.Repeat(", ?", len(ids)-1)+") ORDER BY id", args...)
+}
+
+func (s *Store) syncRuns(ctx context.Context, query string, args ...any) ([]monitor.Run, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -167,11 +205,8 @@ func (s *Store) RunsAfter(ctx context.Context, id int64, limit int) ([]monitor.R
 		if err := rows.Scan(&r.ID, &r.MonitorID, &due, &started, &finished, &r.Outcome, &r.OnTime, &r.DurationMS, &r.Message, &ts); err != nil {
 			return nil, err
 		}
-		if r.Outcome == monitor.OutcomeRunning {
-			break
-		}
 		r.DueAt, r.StartedAt, r.FinishedAt = optMillis(due), optMillis(started), optMillis(finished)
-		if r.FinishedAt == nil {
+		if r.FinishedAt == nil && r.Outcome != monitor.OutcomeRunning {
 			t := fromMillis(ts) // missed runs: when they were judged
 			r.FinishedAt = &t
 		}

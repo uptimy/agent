@@ -265,6 +265,55 @@ func TestIdleUploadsHaveTheirOwnBatchID(t *testing.T) {
 	}
 }
 
+// A run still running holds up no other heartbeat's runs, and is uploaded
+// once, when it finishes (the same row, updated).
+func TestRunningRunDoesNotHoldUpOthers(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	backup := e.monitor(t, monitor.Monitor{Kind: monitor.KindHeartbeat, Name: "backup", Heartbeat: &monitor.Heartbeat{Token: "tok-backup-0123456789", EverySeconds: 3600}})
+	sync := e.monitor(t, monitor.Monitor{Kind: monitor.KindHeartbeat, Name: "sync", Heartbeat: &monitor.Heartbeat{Token: "tok-sync-01234567890", EverySeconds: 60}})
+	e.s.cycle(ctx)
+
+	started := e.now.Add(-time.Minute)
+	long, err := e.st.InsertRun(ctx, monitor.Run{MonitorID: backup.ID, StartedAt: &started, Outcome: monitor.OutcomeRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := e.now
+	if _, err := e.st.InsertRun(ctx, monitor.Run{MonitorID: sync.ID, FinishedAt: &done, Outcome: monitor.OutcomeSuccess}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.cycle(ctx)
+	got := e.cloud.uploads[len(e.cloud.uploads)-1].Heartbeats
+	if len(got) != 1 || got[0].HeartbeatUUID != e.mirror(t, sync.ID) {
+		t.Fatalf("uploaded %+v, want sync's run while backup's still runs", got)
+	}
+
+	finished, dur := e.now.Add(time.Second), int64(61000)
+	long.FinishedAt, long.Outcome, long.DurationMS = &finished, monitor.OutcomeSuccess, &dur
+	if err := e.st.UpdateRun(ctx, long); err != nil {
+		t.Fatal(err)
+	}
+	e.s.cycle(ctx)
+	e.s.cycle(ctx)
+	n := len(e.cloud.uploads)
+	if got := e.cloud.uploads[n-2].Heartbeats; len(got) != 1 || got[0].HeartbeatUUID != e.mirror(t, backup.ID) || got[0].DurationMs != 61000 {
+		t.Fatalf("uploaded %+v, want backup's run once it finished", got)
+	}
+	if got := e.cloud.uploads[n-1].Heartbeats; len(got) != 0 {
+		t.Fatalf("uploaded %+v again", got)
+	}
+}
+
+func (e *env) mirror(t *testing.T, monitorID int64) string {
+	t.Helper()
+	cloud, err := e.st.CloudMonitors(context.Background())
+	if err != nil || cloud[monitorID].CloudUUID == "" {
+		t.Fatalf("monitor %d isn't mirrored (%v)", monitorID, err)
+	}
+	return cloud[monitorID].CloudUUID
+}
+
 // The scheduler records a status change after the check that caused it has
 // finished: that result must already carry the new status.
 func TestResultCarriesTheStatusItCaused(t *testing.T) {

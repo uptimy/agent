@@ -388,7 +388,7 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 		if err != nil {
 			return err
 		}
-		if err := s.Store.SetSyncCursors(ctx, r, n); err != nil {
+		if err := s.Store.SetSyncCursors(ctx, r, n, nil); err != nil {
 			return err
 		}
 	}
@@ -638,18 +638,48 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 		pending[r.MonitorID] = sent{at: r.Time, status: status}
 	}
 
+	// Runs: first those the cursor passed while they were running and that
+	// have finished since (a few at most, so always taken), then
+	// the runs after the cursor. A run still running is remembered, not
+	// waited for, so it holds up no other run.
 	newRuns := runsCursor
+	runningIDs, err := s.Store.SyncRunningRuns(ctx)
+	if err != nil {
+		return false, err
+	}
+	earlier, err := s.Store.RunsByID(ctx, runningIDs)
+	if err != nil {
+		return false, err
+	}
 	var runs []monitor.Run
-	if room := maxItems - len(up.Healthchecks); room > 0 {
-		if runs, err = s.Store.RunsAfter(ctx, runsCursor, room); err != nil {
+	var running []int64 // gone ones (deleted with their heartbeat) are dropped
+	finishedIDs := ""   // for the batch id
+	for _, run := range earlier {
+		if run.Outcome == monitor.OutcomeRunning {
+			running = append(running, run.ID)
+		} else {
+			runs = append(runs, run)
+			finishedIDs += "|" + strconv.FormatInt(run.ID, 10)
+		}
+	}
+	if room := maxItems - len(up.Healthchecks) - len(runs); room > 0 {
+		after, err := s.Store.RunsAfter(ctx, runsCursor, room)
+		if err != nil {
 			return false, err
 		}
-		more = more || len(runs) == room
+		more = more || len(after) == room
+		for _, run := range after {
+			newRuns = run.ID
+			if run.Outcome == monitor.OutcomeRunning {
+				running = append(running, run.ID)
+			} else {
+				runs = append(runs, run)
+			}
+		}
 	} else {
 		more = true
 	}
 	for _, run := range runs {
-		newRuns = run.ID
 		c, mirrored := cloud[run.MonitorID]
 		if !mirrored || c.CloudUUID == "" || c.Kind != monitor.KindHeartbeat || now.Sub(*run.FinishedAt) > maxAge {
 			continue
@@ -675,7 +705,7 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	// recognized and nothing is stored twice. An empty batch only checks the
 	// agent in: it gets an id of its own, or every idle upload would look
 	// like a repeat of the first.
-	sum := sha256.Sum256([]byte(installID + "|" + strconv.FormatInt(resultsCursor, 10) + "|" + strconv.FormatInt(runsCursor, 10) + "|" + strconv.FormatInt(newResults, 10) + "|" + strconv.FormatInt(newRuns, 10)))
+	sum := sha256.Sum256([]byte(installID + "|" + strconv.FormatInt(resultsCursor, 10) + "|" + strconv.FormatInt(runsCursor, 10) + "|" + strconv.FormatInt(newResults, 10) + "|" + strconv.FormatInt(newRuns, 10) + finishedIDs))
 	if len(up.Healthchecks)+len(up.Heartbeats) == 0 {
 		_, _ = rand.Read(sum[:16]) // never fails (crypto/rand panics instead)
 	}
@@ -685,7 +715,7 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	if err != nil {
 		return false, err
 	}
-	if err := s.Store.SetSyncCursors(ctx, newResults, newRuns); err != nil {
+	if err := s.Store.SetSyncCursors(ctx, newResults, newRuns, running); err != nil {
 		return false, err
 	}
 	at := s.now().UTC()
