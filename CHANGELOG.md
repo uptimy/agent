@@ -32,7 +32,7 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 - The Cloud connection belongs to the data volume (its install id). A cloned data volume (two agents sharing an install id) isn't supported, and a stateless deployment (no volume) can't keep a Cloud connection.
 
 ### Removed
-- **Watch the watcher** as a separate heartbeat: it's part of **Connect to Uptimy Cloud** now, which checks the agent in with every upload (your plan's check interval) and alerts after two missed uploads unless you choose a longer delay. Pasting a heartbeat URL and `UPTIMY_HEARTBEAT_URL` (Helm `uptimy.heartbeatUrl`) are gone; an agent that was checking in with one isn't watched until you connect it.
+- **Watch the watcher** as a separate heartbeat: it's part of **Connect to Uptimy Cloud** now, which checks the agent in with every upload (every minute, every 5 minutes on Free) and alerts after two missed uploads unless you choose a longer delay. Pasting a heartbeat URL and `UPTIMY_HEARTBEAT_URL` (Helm `uptimy.heartbeatUrl`) are gone; an agent that was checking in with one isn't watched until you connect it.
 - The **Uptimy** alert channel. Connect to Uptimy Cloud instead: agent monitors become real Uptimy monitors, whose outages open incidents there. Existing Uptimy channels are deleted on upgrade (Uptimy stopped accepting them on 2026-10-14).
 
 ### Fixed
