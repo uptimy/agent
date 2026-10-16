@@ -233,7 +233,9 @@ func (s *Server) finishConnect(w http.ResponseWriter, r *http.Request) {
 		}
 		if old.HeartbeatUUID == conn.HeartbeatUUID && old.MaintenanceUntil != nil {
 			conn.MaintenanceUntil, conn.NormalGraceSeconds = old.MaintenanceUntil, old.NormalGraceSeconds
-			if err := s.Store.UpdateUptimyConnection(r.Context(), conn); err != nil {
+			if err := s.Store.ChangeUptimyConnection(r.Context(), func(c *connect.Connection) {
+				c.MaintenanceUntil, c.NormalGraceSeconds = old.MaintenanceUntil, old.NormalGraceSeconds
+			}); err != nil {
 				s.internalError(w, r, err)
 				return
 			}

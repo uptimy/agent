@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/config"
+	"github.com/uptimy/agent/internal/connect"
 )
 
 func connectedAgent(t *testing.T) (*client, *fakeUptimy, *fakeHeartbeat) {
@@ -170,5 +171,27 @@ func TestHeartbeatSettingsWithoutAccount(t *testing.T) {
 	raw, _ := json.Marshal(body["alert_after_choices"])
 	if string(raw) != "[2,5,10,15,30,60]" {
 		t.Fatalf("choices: %s", raw)
+	}
+}
+
+// A settings request saves only what it changes: the sync may have saved
+// the connection since the request loaded it.
+func TestSettingsKeepSyncFieldsSavedMeanwhile(t *testing.T) {
+	c, _, _ := connectedAgent(t)
+	ctx := context.Background()
+	stale, err := c.srv.Store.UptimyConnection(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The sync sets the location up again in the meantime.
+	if err := c.srv.Store.ChangeUptimyConnection(ctx, func(conn *connect.Connection) {
+		conn.LocationUUID, conn.UploadIntervalSeconds = "loc-new", 120
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.srv.settingsResponse(ctx, stale, connect.HeartbeatSettings{IntervalSeconds: 60, Paused: true})
+	conn, _ := c.srv.Store.UptimyConnection(ctx)
+	if !conn.Paused || conn.LocationUUID != "loc-new" || conn.UploadIntervalSeconds != 120 {
+		t.Fatalf("stored %+v, want paused and the sync's location kept", conn)
 	}
 }

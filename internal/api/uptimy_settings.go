@@ -73,7 +73,9 @@ func (s *Server) settingsResponse(ctx context.Context, conn *connect.Connection,
 	}
 	if conn.Paused != hs.Paused {
 		conn.Paused = hs.Paused
-		if err := s.Store.UpdateUptimyConnection(ctx, *conn); err != nil {
+		// conn was loaded earlier in the request: change only this, so what the
+		// sync saved in the meantime stays.
+		if err := s.Store.ChangeUptimyConnection(ctx, func(c *connect.Connection) { c.Paused = hs.Paused }); err != nil {
 			s.Log.Warn("saving the Uptimy connection", "err", err)
 		}
 	}
@@ -206,7 +208,9 @@ func (s *Server) startUptimyMaintenance(w http.ResponseWriter, r *http.Request) 
 	}
 	until := time.Now().UTC().Add(window)
 	conn.MaintenanceUntil = &until
-	if err := s.Store.UpdateUptimyConnection(r.Context(), *conn); err != nil {
+	if err := s.Store.ChangeUptimyConnection(r.Context(), func(c *connect.Connection) {
+		c.MaintenanceUntil, c.NormalGraceSeconds = conn.MaintenanceUntil, conn.NormalGraceSeconds
+	}); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -241,7 +245,7 @@ func (s *Server) restoreAfterMaintenance(ctx context.Context, conn *connect.Conn
 		return hs, err
 	}
 	conn.MaintenanceUntil, conn.NormalGraceSeconds = nil, 0
-	if err := s.Store.UpdateUptimyConnection(ctx, *conn); err != nil {
+	if err := s.Store.ChangeUptimyConnection(ctx, func(c *connect.Connection) { c.MaintenanceUntil, c.NormalGraceSeconds = nil, 0 }); err != nil {
 		return hs, err
 	}
 	s.Log.Info("maintenance window ended; normal alerting restored")

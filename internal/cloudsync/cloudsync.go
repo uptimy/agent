@@ -322,12 +322,7 @@ func (s *Syncer) resetUp(ctx context.Context, conn *connect.Connection) {
 // isn't overwritten with this cycle's copy.
 func (s *Syncer) updateConnection(ctx context.Context, conn *connect.Connection, change func(*connect.Connection)) error {
 	change(conn)
-	stored, err := s.Store.UptimyConnection(ctx)
-	if err != nil || stored == nil {
-		return err // nil: disconnected meanwhile, nothing to update
-	}
-	change(stored)
-	return s.Store.UpdateUptimyConnection(ctx, *stored)
+	return s.Store.ChangeUptimyConnection(ctx, change)
 }
 
 // SetUp sets a new connection up right away (Connect to Uptimy Cloud), so
