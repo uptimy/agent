@@ -41,6 +41,9 @@ type Server struct {
 	// MonitorsFileProblem is what was wrong with the monitors file at
 	// startup, or nil.
 	MonitorsFileProblem *filesync.Problem
+	// RailwayURL is Railway's API for importing from Railway; empty is
+	// railway.APIURL.
+	RailwayURL string
 
 	limiter *loginLimiter
 	connect connectFlows
@@ -156,6 +159,8 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	// The plan includes the channels' secrets (webhook URLs, keys).
 	admin("POST /api/import/kuma", s.planKumaImport)
 	admin("POST /api/import/kuma/apply", s.applyKumaImport)
+	admin("POST /api/import/railway", s.planRailwayImport)
+	admin("POST /api/import/railway/apply", s.applyRailwayImport)
 
 	auth("GET /api/notifiers", s.listNotifiers)
 	auth("POST /api/notifiers", s.createNotifier)

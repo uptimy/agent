@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +99,94 @@ func TestKumaImport(t *testing.T) {
 	// Importing again skips what exists.
 	if _, again := c.do("POST", "/api/import/kuma/apply", map[string]any{"monitors": monitors}); len(again["skipped"].([]any)) != 2 {
 		t.Fatalf("second import: %v", again)
+	}
+}
+
+func TestRailwayImport(t *testing.T) {
+	const token = "railway-project-token-123"
+	t.Setenv("RAILWAY_PROJECT_ID", "proj")
+	t.Setenv("RAILWAY_ENVIRONMENT_ID", "prod")
+	t.Setenv("RAILWAY_SERVICE_ID", "agent")
+	railway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Query string }
+		json.NewDecoder(r.Body).Decode(&req)
+		switch {
+		case r.Header.Get("Project-Access-Token") != token:
+			w.Write([]byte(`{"data":null,"errors":[{"message":"Project Token not found"}]}`))
+		case strings.Contains(req.Query, "projectToken"):
+			w.Write([]byte(`{"data":{"projectToken":{"projectId":"proj","environmentId":"prod"}}}`))
+		case strings.Contains(req.Query, "serviceInstances"):
+			w.Write([]byte(`{"data":{"project":{"name":"Shop"},"environment":{"name":"production","serviceInstances":{"edges":[
+				{"node":{"serviceId":"api","serviceName":"API","environmentId":"prod","healthcheckPath":"/healthz","domains":{"serviceDomains":[{"domain":"api.up.railway.app","targetPort":8080}]}}},
+				{"node":{"serviceId":"cron","serviceName":"Backup","environmentId":"prod","cronSchedule":"0 3 * * *","domains":{}}},
+				{"node":{"serviceId":"agent","serviceName":"Agent","environmentId":"prod","domains":{}}}]}}}}`))
+		case strings.Contains(req.Query, "privateNetworks"):
+			w.Write([]byte(`{"data":{"privateNetworks":[{"publicId":"net","dnsName":"railway.internal"}]}}`))
+		default:
+			w.Write([]byte(`{"data":{"privateNetworkEndpoint":{"dnsName":"api"}}}`))
+		}
+	}))
+	defer railway.Close()
+
+	c := newTestServer(t)
+	var logs bytes.Buffer
+	c.srv.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	c.srv.RailwayURL = railway.URL
+	c.login("admin", adminPassword)
+
+	if code, body := c.do("POST", "/api/import/railway", map[string]string{"token": "wrong"}); code != 400 || body["error"] != "Railway didn't accept this project token" {
+		t.Fatalf("wrong token: %d %v", code, body)
+	}
+	planWith := func() map[string]any {
+		t.Helper()
+		code, plan := c.do("POST", "/api/import/railway", map[string]string{"token": token})
+		if raw, _ := json.Marshal(plan); code != 200 || strings.Contains(string(raw), token) {
+			t.Fatalf("plan: %d %s", code, raw)
+		}
+		return plan
+	}
+	plan := planWith()
+	services := plan["services"].([]any)
+	if plan["same_project"] != true || len(services) != 2 || len(plan["skipped"].([]any)) != 1 {
+		t.Fatalf("plan: %v", plan)
+	}
+	if target := services[0].(map[string]any)["monitor"].(map[string]any)["check"].(map[string]any)["target"]; target != "http://api.railway.internal:8080/healthz" {
+		t.Fatalf("api target: %v", target)
+	}
+
+	code, result := c.do("POST", "/api/import/railway/apply", map[string]any{"services": services})
+	if code != 200 || len(result["monitors"].([]any)) != 2 || len(result["skipped"].([]any)) != 0 {
+		t.Fatalf("apply: %d %v", code, result)
+	}
+	_, heartbeats := c.doList("GET", "/api/heartbeats")
+	if len(heartbeats) != 1 || heartbeats[0]["source_ref"] != "railway:prod/cron" || heartbeats[0]["source"] != "ui" {
+		t.Fatalf("heartbeats: %v", heartbeats)
+	}
+
+	// An edit keeps the ref, so a renamed monitor is still known as imported.
+	id := result["monitors"].([]any)[0].(map[string]any)["id"].(float64)
+	if code, m := c.do("PUT", fmt.Sprintf("/api/healthchecks/%d", int64(id)), map[string]any{
+		"name": "Shop API", "check": map[string]any{"type": "http", "target": "http://api.railway.internal:8080/"},
+	}); code != 200 || m["source_ref"] != "railway:prod/api" {
+		t.Fatalf("edit: %d %v", code, m)
+	}
+	if again := planWith(); len(again["services"].([]any)) != 0 || len(again["skipped"].([]any)) != 3 {
+		t.Fatalf("second plan: %v", again)
+	}
+	if _, again := c.do("POST", "/api/import/railway/apply", map[string]any{"services": services}); len(again["skipped"].([]any)) != 2 {
+		t.Fatalf("second import: %v", again)
+	}
+
+	c.do("POST", "/api/users", map[string]string{"username": "vic", "password": "temp-pass-1", "role": "viewer"})
+	v := c.another()
+	v.login("vic", "temp-pass-1")
+	v.do("POST", "/api/auth/password", map[string]string{"current": "temp-pass-1", "new": "vics-password"})
+	for _, path := range []string{"/api/import/railway", "/api/import/railway/apply"} {
+		if code, _ := v.do("POST", path, map[string]string{"token": token}); code != 403 {
+			t.Fatalf("viewer %s: %d", path, code)
+		}
+	}
+	if strings.Contains(logs.String(), token) {
+		t.Fatalf("the token was logged: %s", logs.String())
 	}
 }
