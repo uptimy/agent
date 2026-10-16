@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -148,6 +149,16 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Retry-After", f.retryAfter)
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = w.Write([]byte(`{"code":"BACKPRESSURE.429","error":"slow down"}`))
+			return
+		}
+		if f.uploadStatus == http.StatusUnauthorized {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if f.uploadStatus == http.StatusBadRequest {
+			f.uploadStatus = 0
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"code":"BAD_REQUEST.400","error":"locationUuid isn't this agent's location"}`))
 			return
 		}
 		if f.uploadStatus == http.StatusConflict {
@@ -831,6 +842,48 @@ func TestRejectedResults(t *testing.T) {
 	e.s.cycle(ctx)
 	if e.cloud.hcPuts != puts+1 {
 		t.Fatalf("%d PUTs after an unknown mirror, want it sent again once", e.cloud.hcPuts-puts)
+	}
+}
+
+// A rejected key is retried less and less often: only connecting again
+// helps. Once it works again, retries start over.
+func TestRejectedKeyBacksOff(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.s.cycle(ctx)
+	e.cloud.uploadStatus = http.StatusUnauthorized
+	var waits []time.Duration
+	for i := 0; i < 8; i++ {
+		waits = append(waits, e.s.cycle(ctx))
+	}
+	want := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute, 32 * time.Minute, time.Hour, time.Hour}
+	if fmt.Sprint(waits) != fmt.Sprint(want) {
+		t.Fatalf("waits %v, want %v", waits, want)
+	}
+	if st := e.s.Status(); !strings.Contains(st.LastError, "connect again") {
+		t.Fatalf("status %+v, want the key rejected", st)
+	}
+	e.cloud.uploadStatus = 0
+	e.s.cycle(ctx)
+	e.cloud.uploadStatus = http.StatusUnauthorized
+	if wait := e.s.cycle(ctx); wait != time.Minute {
+		t.Fatalf("waits %s after the key worked again, want a minute", wait)
+	}
+}
+
+// Ingest answers 400 when the upload names a location that isn't the
+// agent's (it was set up anew): set it up again, rather than retry for good.
+func TestForeignLocationSetsUpAgain(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.s.cycle(ctx)
+	e.cloud.uploadStatus = http.StatusBadRequest
+	if wait := e.s.cycle(ctx); wait != 0 {
+		t.Fatalf("waits %s, want to set up again at once", wait)
+	}
+	e.s.cycle(ctx)
+	if e.cloud.locationPuts != 2 || e.s.Status().LastError != "" {
+		t.Fatalf("%d set-ups, status %+v, want set up again", e.cloud.locationPuts, e.s.Status())
 	}
 }
 

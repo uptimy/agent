@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -252,6 +253,9 @@ func (c *Client) cloudDo(ctx context.Context, key, method, endpoint string, body
 		return ErrPlanLimit
 	case r.code == "AGENT_LIMIT.403":
 		return ErrAgentLimit
+	case r.status == http.StatusBadRequest && strings.Contains(r.message, "isn't this agent's location"):
+		// Ingest: the location was replaced (set up anew, e.g. elsewhere).
+		return ErrNoLocation
 	case r.status == http.StatusBadRequest || r.status == http.StatusUnprocessableEntity:
 		reason := r.message
 		if reason == "" {

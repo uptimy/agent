@@ -44,6 +44,9 @@ const (
 	maxBatchesPerCycle = 20
 	defaultInterval    = 5 * time.Minute
 	retryInterval      = time.Minute
+	// A rejected key waits longer each time, up to this: only connecting
+	// again helps.
+	maxKeyRetry = time.Hour
 	// Without a sample interval from Cloud: one unchanged result per monitor
 	// per 5 minutes.
 	defaultSampleInterval = 5 * time.Minute
@@ -113,6 +116,8 @@ type Syncer struct {
 	lastSent map[int64]sent
 	// mirrorErrs are the monitors whose mirror failed, by monitor id.
 	mirrorErrs map[int64]failedMirror
+	// keyRejections counts cycles in a row that Cloud rejected the key.
+	keyRejections int
 	// locationSent is the name and version the location was last given
 	// in this process: Cloud gets them on start and whenever they change.
 	locationSent string
@@ -282,13 +287,15 @@ func (s *Syncer) cycle(ctx context.Context) time.Duration {
 }
 
 func (s *Syncer) failed(err error) time.Duration {
-	msg := err.Error()
+	msg, wait := err.Error(), retryInterval
 	if errors.Is(err, connect.ErrKeyRejected) {
 		msg = "Uptimy no longer accepts this agent's key; connect again"
+		wait = min(retryInterval<<min(s.keyRejections, 10), maxKeyRetry)
+		s.keyRejections++
 	}
-	s.Log.Warn("cloud sync", "err", msg)
+	s.Log.Warn("cloud sync", "err", msg, "retry_in", wait)
 	s.update(func(st *Status) { st.LastError = msg })
-	return retryInterval
+	return wait
 }
 
 // forgetLocation makes the next cycle register the location again: Cloud
@@ -344,7 +351,7 @@ func (s *Syncer) Disconnect(ctx context.Context, conn *connect.Connection) error
 		}
 		s.mu.Lock()
 		s.status, s.lastSent, s.lastFull, s.statusEvery = Status{}, map[int64]sent{}, time.Time{}, 0
-		s.mirrorErrs, s.locationSent = map[int64]failedMirror{}, ""
+		s.mirrorErrs, s.locationSent, s.keyRejections = map[int64]failedMirror{}, "", 0
 		s.mu.Unlock()
 	}()
 	client := s.Client()
@@ -857,6 +864,7 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	}
 	at := s.now().UTC()
 	items := len(up.Healthchecks) + len(up.Heartbeats)
+	s.keyRejections = 0
 	s.mu.Lock()
 	for id, p := range pending {
 		s.lastSent[id] = p
