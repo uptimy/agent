@@ -16,7 +16,7 @@ RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist ./web/dist
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/uptimy-agent ./cmd/uptimy-agent \
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/uptimy/agent/internal/version.Version=${VERSION}" -o /out/uptimy-agent ./cmd/uptimy-agent \
  && mkdir -p /out/data
 
 # 3. Minimal runtime: no shell, no package manager, runs as non-root.

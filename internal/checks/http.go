@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/uptimy/agent/internal/monitor"
+	"github.com/uptimy/agent/internal/version"
 )
 
 func init() {
@@ -20,7 +21,7 @@ func (c *Checker) http(ctx context.Context, m monitor.Check) Outcome {
 	if err != nil {
 		return Outcome{Message: err.Error()}
 	}
-	req.Header.Set("User-Agent", "uptimy-agent")
+	req.Header.Set("User-Agent", version.UserAgent())
 	for k, v := range m.Config.Headers {
 		req.Header.Set(k, v)
 	}

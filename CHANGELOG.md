@@ -19,6 +19,7 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 ### Changed
 - **Mistakes in `monitors.yaml` no longer stop the agent.** A file that doesn't parse (or has two monitors with one name) is held back and the monitors stay as they were; otherwise the valid monitors are applied and each invalid one keeps its last good settings. The error is logged and shown on the dashboard, the monitor lists and Settings.
 - A database target whose `${VAR}` is set to something that isn't a valid URL fails only that monitor's checks, naming the variable (not its value), instead of stopping the agent. `uptimy-agent validate` warns about it.
+- Requests carry `User-Agent: uptimy-agent/<version>` (was `uptimy-agent`), in the same form as Uptimy Cloud's checkers but distinct from them.
 - The upgrade logs what it removed (Uptimy alert channels, a pasted check-in URL), and the agent warns at startup while `UPTIMY_HEARTBEAT_URL` is still set.
 
 ### Upgrading from 0.1.8

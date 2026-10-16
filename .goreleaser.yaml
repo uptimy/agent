@@ -13,7 +13,7 @@ builds:
     binary: uptimy-agent
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    ldflags: ["-s -w -X github.com/uptimy/agent/internal/version.Version={{ .Version }}"]
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
 

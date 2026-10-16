@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/uptimy/agent/internal/version"
 )
 
 // ErrKeyRejected means Uptimy didn't accept the agent key (revoked, expired,
@@ -80,7 +82,7 @@ func (c *Client) ExchangeCode(ctx context.Context, code, verifier, redirectURI s
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "uptimy-agent")
+	req.Header.Set("User-Agent", version.UserAgent())
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		var ue *url.Error
@@ -293,7 +295,7 @@ func (c *Client) doFull(ctx context.Context, key, method, endpoint string, body,
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "uptimy-agent")
+	req.Header.Set("User-Agent", version.UserAgent())
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

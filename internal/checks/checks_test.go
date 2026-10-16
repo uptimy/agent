@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/monitor"
+	"github.com/uptimy/agent/internal/version"
 )
 
 // normalized returns c with its defaults filled in, as a saved healthcheck has.
@@ -28,6 +29,24 @@ func normalized(t *testing.T, c monitor.Check) monitor.Check {
 
 func httpMonitor(t *testing.T, target string, cfg monitor.Config) monitor.Check {
 	return normalized(t, monitor.Check{Type: monitor.TypeHTTP, Target: target, Config: cfg})
+}
+
+func TestHTTPUserAgent(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = r.UserAgent() }))
+	defer srv.Close()
+	c := New(nil)
+	ctx := context.Background()
+
+	c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{}))
+	if got != version.UserAgent() {
+		t.Fatalf("user agent %q, want %q", got, version.UserAgent())
+	}
+	// A monitor's own header wins.
+	c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{Headers: map[string]string{"user-agent": "acme-probe"}}))
+	if got != "acme-probe" {
+		t.Fatalf("user agent %q, want the monitor's own", got)
+	}
 }
 
 func TestHTTP(t *testing.T) {

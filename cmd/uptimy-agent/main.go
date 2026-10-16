@@ -30,18 +30,16 @@ import (
 	"github.com/uptimy/agent/internal/notify"
 	"github.com/uptimy/agent/internal/scheduler"
 	"github.com/uptimy/agent/internal/store"
+	"github.com/uptimy/agent/internal/version"
 	"github.com/uptimy/agent/web"
 )
-
-// version is set at build time with -ldflags "-X main.version=...".
-var version = "dev"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "version", "--version":
-			fmt.Println(version)
+			fmt.Println(version.Version)
 			return
 		case "healthcheck":
 			// For Docker HEALTHCHECK: the distroless image has no curl.
@@ -133,12 +131,12 @@ func run(log *slog.Logger) error {
 		c := connect.NewClient(cfg.UptimyAPIURL, cfg.UptimyHeartbeatsURL)
 		c.IngestURL = strings.TrimRight(cfg.UptimyIngestURL, "/")
 		return c
-	}, cfg.AgentName, version, log)
+	}, cfg.AgentName, version.Version, log)
 	go syncer.Run(ctx)
 	go syncer.Watch(ctx, hub.Subscribe)
 
 	srv := &api.Server{
-		Config: cfg, Version: version, Store: st, Scheduler: sched,
+		Config: cfg, Version: version.Version, Store: st, Scheduler: sched,
 		Sender: sender, Alerts: alerts, Hub: hub, Log: log, KubeAvailable: kc != nil, Discovery: disc,
 		Sync: syncer, MonitorsFileProblem: monitorsFileProblem,
 	}
@@ -159,7 +157,7 @@ func run(log *slog.Logger) error {
 	httpServer.RegisterOnShutdown(hub.Close) // end live streams so shutdown is instant
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("uptimy-agent listening", "addr", cfg.Addr, "version", version)
+		log.Info("uptimy-agent listening", "addr", cfg.Addr, "version", version.Version)
 		errc <- httpServer.ListenAndServe()
 	}()
 

@@ -221,6 +221,10 @@ GET and POST both work. A POST body (say, the end of the job's log) is kept with
 - **History:** each run is kept with its result, how long it took and its message; the heartbeat's page shows the on-time rate over 24 hours, 7 days and 30 days.
 - **Ping URLs** are generated and stay the same when you edit the heartbeat. Replace one from its page if it leaks. In YAML, set `token` to pin it (16 to 64 letters, digits, `-` or `_`); otherwise one is generated and kept.
 
+### User-Agent
+
+The agent identifies itself as `uptimy-agent/<version>` (e.g. `uptimy-agent/0.2.0`) on its checks, alert webhooks and calls to Uptimy. To let it through a firewall or WAF, allow that; a monitor's own `User-Agent` header replaces it. It's deliberately unlike Uptimy Cloud's checkers (`upti.my-healthcheck/1.0`), so blocking agents someone else runs never blocks Cloud checks.
+
 ### Ping
 
 Ping monitors send three ICMP echo requests and are up if any reply comes back. The agent uses unprivileged ICMP sockets, so it needs no root or `NET_RAW`: Docker allows them by default, and the Helm chart sets the `net.ipv4.ping_group_range` sysctl. Elsewhere on Linux, run `sysctl -w net.ipv4.ping_group_range="0 2147483647"`.

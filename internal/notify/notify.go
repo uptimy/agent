@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/schema"
+	"github.com/uptimy/agent/internal/version"
 )
 
 // Notifier is a configured alert channel.
@@ -254,7 +255,7 @@ func (s *Sender) PostJSONWithHeaders(ctx context.Context, endpoint string, body 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "uptimy-agent")
+	req.Header.Set("User-Agent", version.UserAgent())
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
