@@ -52,7 +52,7 @@ export function Notifications() {
       <PageHeader
         title="Notifications"
         icon={Bell}
-        description="Channels are alerted when a monitor goes down or recovers: for every monitor, or only the ones you choose. An alert a channel can't take is retried for up to an hour."
+        description="Where alerts go when a monitor goes down or recovers."
         actions={
           canEdit &&
           editing == null && (
@@ -239,11 +239,7 @@ function NotifierForm({ initial, onDone }: { initial: Notifier | null; onDone: (
             someLabel="Only for the monitors I choose"
           />
           {channel?.reminders && (
-            <Field
-              label="Remind while down"
-              htmlFor="n-repeat"
-              hint="Until someone acknowledges the outage or it recovers, so a muted channel or a missed message doesn't leave it unnoticed."
-            >
+            <Field label="Remind while down" htmlFor="n-repeat" hint="Until someone acknowledges it or it recovers.">
               <Select
                 id="n-repeat"
                 value={form.repeat_seconds}

@@ -31,9 +31,7 @@ export function WatchTheWatcherCard() {
           <UptimyMark className="h-3" /> Uptimy Cloud
         </CardTitle>
         <CardDescription>
-          Connect this agent to your Uptimy workspace. Uptimy alerts you from outside when the agent, its server or the
-          cluster goes down, and its monitors show up there with their uptime, reports, status pages and incidents. The
-          agent keeps working on its own either way.
+          Get alerted from outside when this agent goes down, and see its monitors in your Uptimy workspace.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -67,13 +65,7 @@ function ConnectButton() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center">
-        <div className="min-w-0 flex-1 text-sm">
-          <div className="font-medium">Connect with your Uptimy account</div>
-          <p className="mt-0.5 text-muted-foreground">
-            Sign in and pick a workspace: the agent adds itself there with its monitors, read-only. Free, and takes a
-            few seconds.
-          </p>
-        </div>
+        <div className="min-w-0 flex-1 text-sm font-medium">Connect with your Uptimy account</div>
         <Button onClick={() => start.mutate()} disabled={start.isPending} className="shrink-0">
           <UptimyMark className="h-3 brightness-0 invert dark:brightness-100 dark:invert-0" />
           {start.isPending ? "Opening Uptimy…" : "Connect to Uptimy Cloud"}
@@ -148,7 +140,6 @@ function Connected({
                     : `Connected to ${account.workspace_name}`}
           </div>
           <div className="mt-0.5 text-muted-foreground">
-            {status.paused && "Uptimy doesn't alert when the agent goes silent while alerts are paused. "}
             {healthy &&
               sync?.last_upload_at &&
               `Uploading every ${formatInterval(sync.upload_interval_seconds ?? 300)} · last upload ${timeAgo(sync.last_upload_at)}`}
@@ -157,7 +148,7 @@ function Connected({
           {sync?.active && (
             <div className="mt-1 text-muted-foreground">
               {sync.healthchecks} healthcheck{sync.healthchecks === 1 ? "" : "s"} and {sync.heartbeats} heartbeat
-              {sync.heartbeats === 1 ? "" : "s"} in Uptimy, read-only there. Change them here.
+              {sync.heartbeats === 1 ? "" : "s"} in Uptimy
             </div>
           )}
           {!!sync?.not_synced?.length && (
@@ -179,8 +170,7 @@ function Connected({
             </div>
           )}
           <div className="mt-2 text-xs text-muted-foreground">
-            Connected by {account.connected_by} {timeAgo(account.connected_at)}. The agent&apos;s key and its check-in
-            are managed for you.
+            Connected by {account.connected_by} {timeAgo(account.connected_at)}
           </div>
         </div>
       </div>
