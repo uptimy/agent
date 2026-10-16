@@ -65,23 +65,23 @@ func TestHTTP(t *testing.T) {
 	c := New(nil)
 	ctx := context.Background()
 
-	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{})); !out.OK || out.StatusCode != 200 || out.ErrorClass != "" {
+	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{})); !out.OK || out.StatusCode != http.StatusOK || out.ErrorClass != "" {
 		t.Fatalf("expected ok with 200: %+v", out)
 	}
 	if out := c.Run(ctx, httpMonitor(t, srv.URL+"/fail", monitor.Config{})); out.OK || !strings.Contains(out.Message, "500") ||
-		out.StatusCode != 500 || out.ErrorClass != classHTTP5xx {
+		out.StatusCode != http.StatusInternalServerError || out.ErrorClass != classHTTP5xx {
 		t.Fatalf("expected 500 failure: %+v", out)
 	}
-	if out := c.Run(ctx, httpMonitor(t, srv.URL+"/fail", monitor.Config{ExpectedStatus: "500"})); !out.OK || out.StatusCode != 500 {
+	if out := c.Run(ctx, httpMonitor(t, srv.URL+"/fail", monitor.Config{ExpectedStatus: "500"})); !out.OK || out.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("expected 500 to be accepted: %+v", out)
 	}
-	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{ExpectedStatus: "500"})); out.OK || out.StatusCode != 200 || out.ErrorClass != classAssertion {
+	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{ExpectedStatus: "500"})); out.OK || out.StatusCode != http.StatusOK || out.ErrorClass != classAssertion {
 		t.Fatalf("an unexpected 2xx is an assertion failure: %+v", out)
 	}
 	if out := c.Run(ctx, httpMonitor(t, srv.URL+"/missing", monitor.Config{ExpectedStatus: "200"})); out.OK || out.ErrorClass != classHTTP4xx {
 		t.Fatalf("a 404 is http_4xx: %+v", out)
 	}
-	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{Keyword: "degraded"})); out.OK || out.StatusCode != 200 || out.ErrorClass != classAssertion {
+	if out := c.Run(ctx, httpMonitor(t, srv.URL, monitor.Config{Keyword: "degraded"})); out.OK || out.StatusCode != http.StatusOK || out.ErrorClass != classAssertion {
 		t.Fatalf("missing keyword should fail as an assertion: %+v", out)
 	}
 }

@@ -87,9 +87,9 @@ func (c Check) ResolvedTarget() (string, error) {
 	if refs := c.EnvRefs(); len(refs) > 0 {
 		if err := c.validateURL(out); err != nil {
 			if len(refs) == 1 && c.Target == "${"+refs[0]+"}" {
-				return "", fmt.Errorf("%s isn't %s", refs[0], err)
+				return "", fmt.Errorf("%s isn't %w", refs[0], err)
 			}
-			return "", fmt.Errorf("the target with %s filled in isn't %s", strings.Join(refs, ", "), err)
+			return "", fmt.Errorf("the target with %s filled in isn't %w", strings.Join(refs, ", "), err)
 		}
 	}
 	return out, nil

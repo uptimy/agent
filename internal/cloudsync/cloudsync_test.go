@@ -464,10 +464,10 @@ func TestUploadsCarryStatusCodeAndErrorClass(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("uploaded %+v", got)
 	}
-	if got[0].StatusCode != 200 || got[0].ErrorClass != "" {
+	if got[0].StatusCode != http.StatusOK || got[0].ErrorClass != "" {
 		t.Fatalf("up result %+v, want status 200 and no error class", got[0])
 	}
-	if got[1].StatusCode != 503 || got[1].ErrorClass != "http_5xx" {
+	if got[1].StatusCode != http.StatusServiceUnavailable || got[1].ErrorClass != "http_5xx" {
 		t.Fatalf("failed result %+v, want status 503 and http_5xx", got[1])
 	}
 	raw, _ := json.Marshal(got[1])

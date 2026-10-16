@@ -79,7 +79,7 @@ func (s *Store) MarkCloudMonitorsStale(ctx context.Context, cloudUUIDs ...string
 	for i, u := range cloudUUIDs {
 		args[i] = u
 	}
-	_, err := s.db.ExecContext(ctx, "UPDATE cloud_monitors SET hash = '' WHERE cloud_uuid IN (?"+strings.Repeat(", ?", len(cloudUUIDs)-1)+")", args...)
+	_, err := s.db.ExecContext(ctx, "UPDATE cloud_monitors SET hash = '' WHERE cloud_uuid IN (?"+strings.Repeat(", ?", len(cloudUUIDs)-1)+")", args...) //nolint:gosec // only placeholders are added
 	return err
 }
 
