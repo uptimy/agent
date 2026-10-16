@@ -368,3 +368,62 @@ func results(t *testing.T, f *fixture, id int64) []monitor.Result {
 	}
 	return rs
 }
+
+// A start that never finishes is closed as missed after maxRunDuration, so
+// it doesn't show as running for good (or hold up the Cloud upload); older
+// starts left behind are closed on restore.
+func TestAbandonedRunsAreClosed(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	m, err := f.store.CreateMonitor(ctx, monitor.Monitor{Kind: monitor.KindHeartbeat, Name: "export", Heartbeat: &monitor.Heartbeat{
+		Token: "tok-abandoned", EverySeconds: 3600, GraceSeconds: 300,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	for _, ago := range []time.Duration{30 * time.Hour, 25 * time.Hour} {
+		started := now().Add(-ago)
+		run, err := f.store.InsertRun(ctx, monitor.Run{MonitorID: m.ID, StartedAt: &started, Outcome: monitor.OutcomeRunning})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, run.ID)
+	}
+	f.sched.Upsert(m)
+	eventually(t, "abandoned runs closed", func() bool {
+		runs, _ := f.store.RunsByID(ctx, ids)
+		for _, r := range runs {
+			if r.Outcome != monitor.OutcomeMissed || r.Message != abandonedRun {
+				return false
+			}
+		}
+		return len(runs) == 2
+	})
+	if st := f.sched.Heartbeat(m); st.Running != nil {
+		t.Fatalf("still running: %+v", st)
+	}
+}
+
+// A run that pinged /start, ran past its deadline (recorded missed) and
+// then finished is one run: late, with its duration, and no start left
+// running.
+func TestLateRunKeepsItsStart(t *testing.T) {
+	f := newFixture(t)
+	m := f.create(t, fastHeartbeat("tok-late-start"))
+	f.sched.Ping("tok-late-start", SignalStart, "")
+	eventually(t, "running", func() bool { return f.sched.Heartbeat(m).Running != nil })
+	eventually(t, "missed", func() bool { return f.sched.Heartbeat(m).State == monitor.StateMissed })
+	f.sched.Ping("tok-late-start", SignalSuccess, "")
+	eventually(t, "back on schedule", func() bool { return f.sched.Heartbeat(m).State == monitor.StateOnTime })
+	runs, _ := f.store.RecentRuns(context.Background(), m.ID, 10)
+	for _, r := range runs {
+		if r.Outcome == monitor.OutcomeRunning {
+			t.Fatalf("a start was left running: %+v", runs)
+		}
+	}
+	last, _ := f.store.LastRun(context.Background(), m.ID)
+	if last.Outcome != monitor.OutcomeSuccess || last.StartedAt == nil || last.DurationMS == nil {
+		t.Fatalf("late run %+v, want success with its start and duration", last)
+	}
+}

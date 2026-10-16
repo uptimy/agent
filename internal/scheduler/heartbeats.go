@@ -32,8 +32,11 @@ const (
 )
 
 // maxRunDuration bounds how long a started run is tracked: a finish ping
-// later than this isn't paired with that start.
+// later than this isn't paired with that start, and the start is closed as
+// missed (abandonedRun).
 const maxRunDuration = 24 * time.Hour
+
+const abandonedRun = "started and never reported finishing"
 
 type ping struct {
 	signal  Signal
@@ -175,8 +178,13 @@ func (t *heartbeatTracker) restore(ctx context.Context) {
 	} else if !errors.Is(err, store.ErrNotFound) {
 		t.s.log.Error("loading the last run", "heartbeat", t.m.Name, "err", err)
 	}
+	var keep int64
 	if open, err := t.s.store.OpenRun(ctx, t.m.ID); err == nil {
-		t.open = &open
+		t.open, keep = &open, open.ID
+	}
+	// Older starts were replaced or left behind (e.g. before an upgrade).
+	if err := t.s.store.AbandonRuns(ctx, t.m.ID, keep, abandonedRun); err != nil {
+		t.s.log.Error("closing abandoned runs", "heartbeat", t.m.Name, "err", err)
 	}
 	t.publish()
 }
@@ -201,15 +209,22 @@ func (t *heartbeatTracker) run(ctx context.Context) {
 		due := t.h.NextDue(t.anchor)
 		deadline := due.Add(t.h.Grace())
 		now := now()
+		if t.open != nil && !now.Before(t.open.StartedAt.Add(maxRunDuration)) {
+			t.abandon(ctx)
+		}
 		if !now.Before(deadline) {
 			t.miss(ctx, due)
 			continue // the next run is due after this one
 		}
 		t.publish()
-		// Wake at the next change: when the run becomes late, or missed.
+		// Wake at the next change: when the run becomes late, or missed, or
+		// a started run is given up on.
 		wake := deadline
 		if now.Before(due) {
 			wake = due
+		}
+		if t.open != nil {
+			wake = minTime(wake, t.open.StartedAt.Add(maxRunDuration))
 		}
 		timer.Reset(wake.Sub(now))
 		select {
@@ -278,6 +293,10 @@ func (t *heartbeatTracker) handle(ctx context.Context, p ping, due, deadline tim
 		// the deadline, and was only seen after it.)
 		run = *t.missed
 		run.OnTime, run.Message = run.DueAt != nil && !now.After(run.DueAt.Add(t.h.Grace())), p.message
+		// If it pinged /start, that start is this run's: fold it in.
+		if t.open != nil && now.Sub(*t.open.StartedAt) <= maxRunDuration {
+			run.StartedAt = t.open.StartedAt
+		}
 	case t.open != nil && now.Sub(*t.open.StartedAt) <= maxRunDuration:
 		run.ID, run.StartedAt = t.open.ID, t.open.StartedAt
 	}
@@ -299,6 +318,18 @@ func (t *heartbeatTracker) handle(ctx context.Context, p ping, due, deadline tim
 	if err != nil {
 		t.s.log.Error("saving a run", "heartbeat", t.m.Name, "err", err)
 	}
+	if t.open != nil && t.open.ID != run.ID {
+		// The start wasn't finished by this run's row: folded into it, or too
+		// old to pair with it.
+		if run.StartedAt == t.open.StartedAt {
+			err = t.s.store.DeleteRun(ctx, t.open.ID)
+		} else {
+			err = t.s.store.AbandonRuns(ctx, t.m.ID, run.ID, abandonedRun)
+		}
+		if err != nil {
+			t.s.log.Error("closing a started run", "heartbeat", t.m.Name, "err", err)
+		}
+	}
 	t.open, t.missed, t.anchor = nil, nil, now
 	t.s.hub.Publish(events.Message{Type: "run", MonitorID: t.m.ID, Data: run})
 	t.s.countRun(t.m.ID, run.Outcome)
@@ -314,6 +345,24 @@ func (t *heartbeatTracker) handle(ctx context.Context, p ping, due, deadline tim
 	}
 	t.state = monitor.StateOnTime
 	t.transition(msg)
+}
+
+// abandon closes the started run once it can no longer be finished.
+func (t *heartbeatTracker) abandon(ctx context.Context) {
+	run := *t.open
+	run.Outcome, run.Message = monitor.OutcomeMissed, abandonedRun
+	if err := t.s.store.UpdateRun(ctx, run); err != nil {
+		t.s.log.Error("closing a started run", "heartbeat", t.m.Name, "err", err)
+	}
+	t.open = nil
+	t.s.hub.Publish(events.Message{Type: "run", MonitorID: t.m.ID, Data: run})
+}
+
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
 }
 
 // start records that a run began; its finish ping gives the duration. A new

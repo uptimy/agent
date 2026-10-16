@@ -51,6 +51,21 @@ func (s *Store) UpdateRun(ctx context.Context, r monitor.Run) error {
 	return err
 }
 
+// DeleteRun removes a run, e.g. a start folded into the run it belonged to.
+func (s *Store) DeleteRun(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM runs WHERE id = ?", id)
+	return err
+}
+
+// AbandonRuns closes the heartbeat's runs that started and never finished,
+// all but keepID (0 for none): they count as missed, with message. A run
+// left running would show as running for good.
+func (s *Store) AbandonRuns(ctx context.Context, monitorID, keepID int64, message string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE runs SET outcome = ?, message = ? WHERE monitor_id = ? AND outcome = ? AND id != ?",
+		monitor.OutcomeMissed, message, monitorID, monitor.OutcomeRunning, keepID)
+	return err
+}
+
 // OpenRun returns the heartbeat's run that started and hasn't finished, or
 // ErrNotFound.
 func (s *Store) OpenRun(ctx context.Context, monitorID int64) (monitor.Run, error) {
