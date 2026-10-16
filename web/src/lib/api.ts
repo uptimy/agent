@@ -423,6 +423,11 @@ export interface CloudSync {
   over_plan?: boolean;
   healthchecks: number;
   heartbeats: number;
+  // Monitors that couldn't be mirrored, and why.
+  not_synced?: { name: string; reason: string }[];
+  // Results Uptimy rejected for their time: the agent's clock is likely off.
+  rejected_too_old?: number;
+  rejected_clock_ahead?: number;
 }
 
 // When Uptimy alerts about a silent agent; Uptimy holds the values.

@@ -281,6 +281,7 @@ func (c *Client) doStatus(ctx context.Context, key, method, endpoint string, bod
 type response struct {
 	status     int
 	code       string // the error envelope's code, e.g. "PLAN_LIMIT.403"
+	message    string // and its error
 	retryAfter time.Duration
 }
 
@@ -321,7 +322,7 @@ func (c *Client) doFull(ctx context.Context, key, method, endpoint string, body,
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(raw, &e)
-		r.code = e.Code
+		r.code, r.message = e.Code, e.Error
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized:
 			return r, ErrKeyRejected

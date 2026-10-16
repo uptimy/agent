@@ -67,10 +67,19 @@ func (s *Store) DeleteCloudMonitor(ctx context.Context, monitorID int64) error {
 	return err
 }
 
-// MarkCloudMonitorsStale makes the next reconcile send every mirror again,
-// e.g. to a new location.
-func (s *Store) MarkCloudMonitorsStale(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE cloud_monitors SET hash = ''")
+// MarkCloudMonitorsStale makes the next reconcile send the mirrors with
+// these Cloud uuids again, or every mirror without any (e.g. to a new
+// location).
+func (s *Store) MarkCloudMonitorsStale(ctx context.Context, cloudUUIDs ...string) error {
+	if len(cloudUUIDs) == 0 {
+		_, err := s.db.ExecContext(ctx, "UPDATE cloud_monitors SET hash = ''")
+		return err
+	}
+	args := make([]any, len(cloudUUIDs))
+	for i, u := range cloudUUIDs {
+		args[i] = u
+	}
+	_, err := s.db.ExecContext(ctx, "UPDATE cloud_monitors SET hash = '' WHERE cloud_uuid IN (?"+strings.Repeat(", ?", len(cloudUUIDs)-1)+")", args...)
 	return err
 }
 

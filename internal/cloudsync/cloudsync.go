@@ -19,7 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +50,9 @@ const (
 	// Watch waits this long after an event, so a burst of edits or status
 	// changes is sent in one upload.
 	debounce = 5 * time.Second
+	// Cloud's limits for a mirror (upti.my-api agent_requests.ts).
+	maxTarget, maxLocationName        = 2048, 100
+	maxCloudInterval, maxCloudTimeout = 86400, 3600
 	// statusSlack covers the moment between a result being saved and the
 	// status change it causes; far shorter than any check interval.
 	statusSlack = time.Second
@@ -65,6 +70,25 @@ type Status struct {
 	OverPlan     bool `json:"over_plan,omitempty"`
 	Healthchecks int  `json:"healthchecks"`
 	Heartbeats   int  `json:"heartbeats"`
+	// NotSynced are monitors that couldn't be mirrored, and why.
+	NotSynced []NotSynced `json:"not_synced,omitempty"`
+	// Results Cloud rejected for their time, in uploads since the last one
+	// without such a rejection: the agent's clock is likely off.
+	RejectedTooOld     int `json:"rejected_too_old,omitempty"`
+	RejectedClockAhead int `json:"rejected_clock_ahead,omitempty"`
+}
+
+// NotSynced is a monitor that isn't in Cloud.
+type NotSynced struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
+// failedMirror is a monitor whose mirror failed, with its definition then.
+type failedMirror struct {
+	hash    string
+	refused bool // Cloud refused it: not sent again unchanged until a full reconcile
+	NotSynced
 }
 
 // Syncer runs the sync for the agent's "Connect to Uptimy Cloud" connection.
@@ -87,6 +111,8 @@ type Syncer struct {
 	// lastSent thins uploads: per monitor, when its last result was sent and
 	// with which status.
 	lastSent map[int64]sent
+	// mirrorErrs are the monitors whose mirror failed, by monitor id.
+	mirrorErrs map[int64]failedMirror
 }
 
 type sent struct {
@@ -98,7 +124,7 @@ type sent struct {
 func New(st *store.Store, client func() *connect.Client, agentName, version string, log *slog.Logger) *Syncer {
 	return &Syncer{
 		Store: st, Client: client, AgentName: agentName, Version: version, Log: log,
-		wake: make(chan struct{}, 1), now: time.Now, after: time.After, lastSent: map[int64]sent{},
+		wake: make(chan struct{}, 1), now: time.Now, after: time.After, lastSent: map[int64]sent{}, mirrorErrs: map[int64]failedMirror{},
 	}
 }
 
@@ -305,6 +331,7 @@ func (s *Syncer) Disconnect(ctx context.Context, conn *connect.Connection) error
 		}
 		s.mu.Lock()
 		s.status, s.lastSent, s.lastFull, s.statusEvery = Status{}, map[int64]sent{}, time.Time{}, 0
+		s.mirrorErrs = map[int64]failedMirror{}
 		s.mu.Unlock()
 	}()
 	client := s.Client()
@@ -332,7 +359,7 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 	if err != nil {
 		return err
 	}
-	loc, err := client.PutLocation(ctx, conn.APIKey, installID, s.AgentName, s.Version)
+	loc, err := client.PutLocation(ctx, conn.APIKey, installID, truncateRunes(s.AgentName, maxLocationName), s.Version)
 	if errors.Is(err, connect.ErrAgentLimit) {
 		s.update(func(st *Status) {
 			st.OverPlan = true
@@ -452,19 +479,37 @@ func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *co
 		hash := definitionHash(m)
 		missing := full && mirrored && !inCloud[c.ClientRef] && !inCloud[c.CloudUUID]
 		if mirrored && c.Hash == hash && !missing {
+			delete(s.mirrorErrs, m.ID)
 			continue
 		}
-		// On an error the mirror keeps what Cloud had (its uuid and hash), and
-		// the next cycle tries again.
+		if f, ok := s.mirrorErrs[m.ID]; ok && f.refused && f.hash == hash && !full {
+			continue // refused as it is
+		}
+		// On an error the mirror keeps what Cloud had (its uuid and hash):
+		// the next cycle tries again, or, if Cloud refused it, the next full
+		// reconcile or a change.
+		failed := func(err error) {
+			var refused *connect.RefusedError
+			f := failedMirror{hash: hash, refused: errors.As(err, &refused), NotSynced: NotSynced{Name: m.Name, Reason: err.Error()}}
+			if f.refused {
+				f.Reason = refused.Reason
+			}
+			s.mirrorErrs[m.ID] = f
+			s.Log.Warn("cloud sync: mirroring a monitor", "monitor", m.Name, "err", err)
+		}
 		switch m.Kind {
 		case monitor.KindHealthcheck:
+			if len(m.Check.DisplayTarget()) > maxTarget {
+				failed(&connect.RefusedError{Reason: fmt.Sprintf("its target is longer than the %d characters Uptimy takes", maxTarget)})
+				continue
+			}
 			ref := healthcheckRef(m.ID)
 			out, err := client.PutHealthcheck(ctx, conn.APIKey, ref, mirroredHealthcheck(m))
 			if err != nil {
 				if isFatal(err) {
 					return err
 				}
-				s.Log.Warn("cloud sync: mirroring a healthcheck", "monitor", m.Name, "err", err)
+				failed(err)
 				continue
 			}
 			if err := s.Store.SaveCloudMonitor(ctx, store.CloudMonitor{MonitorID: m.ID, Kind: m.Kind, ClientRef: ref, CloudUUID: out.HealthcheckUUID, Hash: hash}); err != nil {
@@ -483,7 +528,7 @@ func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *co
 					if isFatal(err) {
 						return err
 					}
-					s.Log.Warn("cloud sync: updating a heartbeat", "monitor", m.Name, "err", err)
+					failed(err)
 					continue
 				}
 				if err != nil {
@@ -496,7 +541,7 @@ func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *co
 					if isFatal(err) {
 						return err
 					}
-					s.Log.Warn("cloud sync: mirroring a heartbeat", "monitor", m.Name, "err", err)
+					failed(err)
 					continue
 				}
 				uuid = hb.UUID
@@ -505,7 +550,17 @@ func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *co
 				return err
 			}
 		}
+		delete(s.mirrorErrs, m.ID)
 	}
+	var notSynced []NotSynced
+	for id, f := range s.mirrorErrs {
+		if !present[id] {
+			delete(s.mirrorErrs, id)
+			continue
+		}
+		notSynced = append(notSynced, f.NotSynced)
+	}
+	slices.SortFunc(notSynced, func(a, b NotSynced) int { return strings.Compare(a.Name, b.Name) })
 
 	for id, c := range cloud {
 		if present[id] {
@@ -549,7 +604,7 @@ func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *co
 			hb++
 		}
 	}
-	s.update(func(st *Status) { st.Active, st.Healthchecks, st.Heartbeats = true, hc, hb })
+	s.update(func(st *Status) { st.Active, st.Healthchecks, st.Heartbeats, st.NotSynced = true, hc, hb, notSynced })
 	return nil
 }
 
@@ -750,12 +805,31 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	if err := s.Store.SetSyncCursors(ctx, newResults, newRuns, pendingRuns); err != nil {
 		return false, err
 	}
+	rejected := map[string]int{}
+	var unknown []string
+	for _, r := range res.Rejected {
+		rejected[r.Reason]++
+		if r.Reason == connect.RejectedUnknown {
+			unknown = append(unknown, r.UUID)
+		}
+	}
+	if len(unknown) > 0 {
+		// Cloud doesn't know these mirrors (any more): send them again,
+		// which returns their current uuids.
+		s.Log.Warn("cloud sync: Uptimy doesn't know some mirrors; sending them again", "count", len(unknown))
+		if err := s.Store.MarkCloudMonitorsStale(ctx, unknown...); err != nil {
+			return false, err
+		}
+	}
 	at := s.now().UTC()
+	items := len(up.Healthchecks) + len(up.Heartbeats)
 	s.mu.Lock()
 	for id, p := range pending {
 		s.lastSent[id] = p
 	}
 	s.status.LastUploadAt, s.status.LastError, s.status.OverPlan = &at, "", false
+	countRejected(&s.status.RejectedTooOld, rejected[connect.RejectedTooOld], items)
+	countRejected(&s.status.RejectedClockAhead, rejected[connect.RejectedClockAhead], items)
 	s.mu.Unlock()
 
 	if res.UploadIntervalSeconds > 0 && res.UploadIntervalSeconds != conn.UploadIntervalSeconds {
@@ -780,6 +854,17 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 		s.mu.Unlock()
 	}
 	return more, nil
+}
+
+// countRejected adds an upload's rejections to *count, or clears it when an
+// upload with items had none.
+func countRejected(count *int, n, items int) {
+	switch {
+	case n > 0:
+		*count += n
+	case items > 0:
+		*count = 0
+	}
 }
 
 // changed sets *v to a value Cloud sent (0: none) and reports whether it differed.
@@ -857,9 +942,11 @@ func mirroredHealthcheck(m monitor.Monitor) connect.MirroredHealthcheck {
 	return connect.MirroredHealthcheck{
 		Name: m.Name, Type: string(c.Type),
 		// Passwords never leave the agent; ${VAR} references stay references.
-		Target:          c.DisplayTarget(),
-		IntervalSeconds: c.IntervalSeconds, TimeoutSeconds: c.TimeoutSeconds,
-		Config: config, Paused: m.Paused,
+		Target: c.DisplayTarget(),
+		// Cloud only shows these; it takes them within its limits.
+		IntervalSeconds: min(max(c.IntervalSeconds, 1), maxCloudInterval),
+		TimeoutSeconds:  min(max(c.TimeoutSeconds, 1), maxCloudTimeout),
+		Config:          config, Paused: m.Paused,
 	}
 }
 
@@ -897,6 +984,14 @@ func healthcheckRef(id int64) string { return "hc-" + strconv.FormatInt(id, 10) 
 // heartbeatRef must be unique in the workspace, which other agents share.
 func heartbeatRef(installID string, id int64) string {
 	return installID + ":hb-" + strconv.FormatInt(id, 10)
+}
+
+// truncateRunes cuts s to at most n characters.
+func truncateRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
 }
 
 func truncate(s string) string {

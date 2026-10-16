@@ -31,7 +31,12 @@ type fakeCloud struct {
 	sample       int
 	locationPuts int
 	hcPuts       int
-	hbPuts       int
+	locationName string
+	// refuse: healthchecks with this name are refused (400).
+	refuse string
+	// reject: ingest rejects every item for this reason.
+	reject string
+	hbPuts int
 	// failNext answers the next request whose "METHOD path prefix" matches
 	// with this status (and an error), once.
 	failNext     map[string]int
@@ -77,6 +82,7 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodPut && path == "/v1/api/agent/location":
 		f.locationPuts++
+		f.locationName, _ = body["name"].(string)
 		reply(http.StatusOK, map[string]any{"locationUuid": "loc-1", "uploadIntervalSeconds": f.interval,
 			"statusChangeIntervalSeconds": f.statusChange, "sampleIntervalSeconds": f.sample, "withinPlan": true})
 	case r.Method == http.MethodDelete && path == "/v1/api/agent/location":
@@ -91,6 +97,11 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		var h connect.MirroredHealthcheck
 		_ = json.Unmarshal(raw, &h)
+		if h.Name == f.refuse {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"code":"VALIDATION.400","error":"type isn't supported"}`))
+			return
+		}
 		f.healthchecks[ref] = h
 		f.hcPuts++
 		reply(http.StatusOK, map[string]any{"clientRef": ref, "healthcheckUuid": "uuid-" + ref, "applicationUuid": "app-" + ref})
@@ -153,7 +164,13 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 		var u connect.Upload
 		_ = json.Unmarshal(raw, &u)
 		f.uploads = append(f.uploads, u)
-		reply(http.StatusAccepted, map[string]any{"accepted": len(u.Healthchecks) + len(u.Heartbeats), "uploadIntervalSeconds": f.interval,
+		rejected := []map[string]any{}
+		if f.reject != "" {
+			for _, h := range u.Healthchecks {
+				rejected = append(rejected, map[string]any{"uuid": h.HealthcheckUUID, "reason": f.reject})
+			}
+		}
+		reply(http.StatusAccepted, map[string]any{"accepted": len(u.Healthchecks) + len(u.Heartbeats) - len(rejected), "rejected": rejected, "uploadIntervalSeconds": f.interval,
 			"statusChangeIntervalSeconds": f.statusChange, "sampleIntervalSeconds": f.sample})
 	default:
 		w.WriteHeader(http.StatusNotFound)
@@ -695,6 +712,92 @@ func TestFullReconcileSendsOnlyWhatsMissing(t *testing.T) {
 	}
 	if _, ok := e.cloud.heartbeats["hb-stray"]; ok {
 		t.Fatal("a stray mirror wasn't deleted")
+	}
+}
+
+// Cloud only shows a mirror's interval and timeout: they're sent within its
+// limits rather than refused. So is the agent's name.
+func TestMirrorsFitCloudsLimits(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.s.AgentName = strings.Repeat("n", 150)
+	slow := healthcheck("slow", "http", "http://slow.local")
+	slow.Check.IntervalSeconds, slow.Check.TimeoutSeconds = 172800, 7200
+	slow = e.monitor(t, slow)
+	e.s.cycle(ctx)
+	if h := e.cloud.healthchecks["hc-"+itoa(slow.ID)]; h.IntervalSeconds != 86400 || h.TimeoutSeconds != 3600 {
+		t.Fatalf("mirror %+v, want interval 86400 and timeout 3600", h)
+	}
+	if len(e.cloud.locationName) != 100 {
+		t.Fatalf("location name of %d characters, want 100", len(e.cloud.locationName))
+	}
+}
+
+// A monitor Cloud refuses shows in the status with why, and isn't sent
+// again unchanged until the full reconcile.
+func TestRefusedMonitorsShowInStatus(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.cloud.refuse = "odd"
+	e.monitor(t, healthcheck("odd", "http", "http://odd.local"))
+	e.monitor(t, healthcheck("long", "http", "http://long.local/"+strings.Repeat("a", 2100)))
+	e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	e.s.cycle(ctx)
+	got := e.s.Status().NotSynced
+	if len(got) != 2 || got[0].Name != "long" || !strings.Contains(got[0].Reason, "2048") || got[1].Name != "odd" || got[1].Reason != "type isn't supported" {
+		t.Fatalf("not synced %+v", got)
+	}
+	if st := e.s.Status(); st.Healthchecks != 1 {
+		t.Fatalf("status %+v, want api mirrored", st)
+	}
+	puts := e.cloud.hcPuts
+	e.s.cycle(ctx)
+	if e.cloud.hcPuts != puts || len(e.s.Status().NotSynced) != 2 {
+		t.Fatalf("%d PUTs of refused monitors, status %+v", e.cloud.hcPuts-puts, e.s.Status())
+	}
+	e.cloud.refuse = ""
+	e.now = e.now.Add(fullReconcileEvery)
+	e.s.cycle(ctx)
+	if got := e.s.Status().NotSynced; len(got) != 1 || got[0].Name != "long" {
+		t.Fatalf("not synced %+v after the full reconcile, want only long", got)
+	}
+}
+
+// Results Cloud rejects for their time are counted for the UI (the clock is
+// off); ones for a mirror Cloud doesn't know make it send that mirror again.
+func TestRejectedResults(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	e.s.cycle(ctx)
+	result := func(ok bool) {
+		e.now = e.now.Add(10 * time.Minute) // past the sample interval
+		_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: e.now, OK: ok})
+	}
+
+	e.cloud.reject = connect.RejectedTooOld
+	result(true)
+	e.s.cycle(ctx)
+	result(true)
+	e.s.cycle(ctx)
+	if st := e.s.Status(); st.RejectedTooOld != 2 || st.RejectedClockAhead != 0 {
+		t.Fatalf("status %+v, want 2 rejected as too old", st)
+	}
+	e.cloud.reject = connect.RejectedClockAhead
+	result(true)
+	e.s.cycle(ctx)
+	if st := e.s.Status(); st.RejectedTooOld != 0 || st.RejectedClockAhead != 1 {
+		t.Fatalf("status %+v, want 1 rejected as ahead and the too-old count cleared", st)
+	}
+
+	e.cloud.reject = connect.RejectedUnknown
+	result(false)
+	puts := e.cloud.hcPuts
+	e.s.cycle(ctx)
+	e.cloud.reject = ""
+	e.s.cycle(ctx)
+	if e.cloud.hcPuts != puts+1 {
+		t.Fatalf("%d PUTs after an unknown mirror, want it sent again once", e.cloud.hcPuts-puts)
 	}
 }
 

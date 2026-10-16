@@ -28,6 +28,12 @@ var (
 	ErrPlanLimit = errors.New("this agent is over your plan's connected agents, so its results aren't synced")
 )
 
+// RefusedError: Cloud refused the request as invalid (400 or 422), e.g. a
+// monitor it can't mirror. Sending it again unchanged won't help.
+type RefusedError struct{ Reason string }
+
+func (e *RefusedError) Error() string { return "Uptimy: " + e.Reason }
+
 // RetryAfterError asks the caller to wait before uploading again (429).
 type RetryAfterError struct{ After time.Duration }
 
@@ -199,6 +205,13 @@ type UploadHeartbeat struct {
 	Status        string    `json:"status"` // up, down
 }
 
+// Why ingest rejected an item (UploadResult.Rejected).
+const (
+	RejectedUnknown    = "unknown"     // no such mirror (any more)
+	RejectedTooOld     = "too_old"     // more than a day old
+	RejectedClockAhead = "clock_ahead" // timestamped in the future
+)
+
 // UploadResult is what ingest accepted.
 type UploadResult struct {
 	Accepted int `json:"accepted"`
@@ -239,6 +252,12 @@ func (c *Client) cloudDo(ctx context.Context, key, method, endpoint string, body
 		return ErrPlanLimit
 	case r.code == "AGENT_LIMIT.403":
 		return ErrAgentLimit
+	case r.status == http.StatusBadRequest || r.status == http.StatusUnprocessableEntity:
+		reason := r.message
+		if reason == "" {
+			reason = "HTTP " + strconv.Itoa(r.status)
+		}
+		return &RefusedError{Reason: reason}
 	}
 	return err
 }

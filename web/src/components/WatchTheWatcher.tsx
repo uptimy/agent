@@ -160,6 +160,24 @@ function Connected({
               {sync.heartbeats === 1 ? "" : "s"} in Uptimy, read-only there. Change them here.
             </div>
           )}
+          {!!sync?.not_synced?.length && (
+            <div className="mt-1 text-down">
+              {sync.not_synced.length} monitor{sync.not_synced.length === 1 ? " isn't" : "s aren't"} synced to Uptimy:{" "}
+              {sync.not_synced.map((m) => `${m.name} (${m.reason})`).join(", ")}
+            </div>
+          )}
+          {!!sync?.rejected_too_old && (
+            <div className="mt-1 text-down">
+              Uptimy rejected {sync.rejected_too_old} result{sync.rejected_too_old === 1 ? "" : "s"} that{" "}
+              {sync.rejected_too_old === 1 ? "was" : "were"} more than a day old — check the agent&apos;s clock
+            </div>
+          )}
+          {!!sync?.rejected_clock_ahead && (
+            <div className="mt-1 text-down">
+              Uptimy rejected {sync.rejected_clock_ahead} result{sync.rejected_clock_ahead === 1 ? "" : "s"} timestamped
+              in the future — check the agent&apos;s clock
+            </div>
+          )}
           <div className="mt-2 text-xs text-muted-foreground">
             Connected by {account.connected_by} {timeAgo(account.connected_at)}. The agent&apos;s key and its check-in
             are managed for you.
