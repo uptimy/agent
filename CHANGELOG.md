@@ -15,6 +15,7 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 - `TRUSTED_PROXIES` sets which proxies' `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed. By default, loopback and private networks.
 - Webhook alerts carry an `id` that's the same on every attempt, and reminders and acknowledgements a `type`.
 - The Uptime Kuma importer points out monitors that re-sent their alerts while down, so you can turn on reminders.
+- **Import from Railway:** Settings → Import from Railway turns the services of a Railway project into HTTP checks (private when the agent runs in the project), database checks and cron heartbeats, from a project token that isn't stored.
 
 ### Changed
 - **Mistakes in `monitors.yaml` no longer stop the agent.** A file that doesn't parse (or has two monitors with one name) is held back and the monitors stay as they were; otherwise the valid monitors are applied and each invalid one keeps its last good settings. The error is logged and shown on the dashboard, the monitor lists and Settings.

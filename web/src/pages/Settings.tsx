@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorNote, PageHeader } from "@/components/Layout";
 import { WatchTheWatcherCard } from "@/components/WatchTheWatcher";
 import { KumaImportCard } from "@/components/KumaImport";
+import { RailwayImportCard } from "@/components/RailwayImport";
 import { useCanEdit } from "@/components/AuthGate";
 import { MonitorsFileNotice } from "@/components/MonitorsFileNotice";
 
@@ -26,6 +27,7 @@ export function Settings() {
           <WatchTheWatcherCard />
           {i.discovery && <DiscoveryCard />}
           {canEdit && <KumaImportCard />}
+          {canEdit && <RailwayImportCard />}
 
           <Card>
             <CardHeader>

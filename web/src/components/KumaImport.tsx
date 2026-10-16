@@ -1,14 +1,12 @@
 import { useRef, useState } from "react";
-import { Link } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft, Upload } from "lucide-react";
-import { api, type KumaImportResult, type KumaPlan, type KumaSkipped } from "@/lib/api";
-import { monitorPath } from "@/lib/monitors";
+import { api, type KumaImportResult, type KumaPlan } from "@/lib/api";
 import { useChannelLabel, useCheckTypeLabel } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { ErrorNote } from "@/components/Layout";
+import { ImportResult, Item, ItemList, SkippedList } from "@/components/ImportReview";
 
 /**
  * Import from Uptime Kuma: upload kuma.db, review what it becomes, choose
@@ -35,7 +33,12 @@ export function KumaImportCard() {
       </CardHeader>
       <CardContent>
         {result ? (
-          <ImportResult result={result} onDone={reset} />
+          <ImportResult
+            result={result}
+            onDone={reset}
+            heartbeatsTitle="Point your jobs at the new ping URLs"
+            heartbeatsHint="Kuma's push URLs don't work here. Each heartbeat has its own:"
+          />
         ) : plan ? (
           <PlanReview plan={plan} onCancel={reset} onImported={setResult} />
         ) : (
@@ -162,107 +165,6 @@ function PlanReview({
         </Button>
         <Button onClick={() => apply.mutate()} disabled={count === 0 || apply.isPending}>
           {apply.isPending ? "Importing…" : `Import ${count} item${count === 1 ? "" : "s"}`}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function ItemList({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <h3 className="mb-2 text-sm font-medium">{title}</h3>
-      <ul className="max-h-80 divide-y overflow-y-auto rounded-lg border">{children}</ul>
-    </div>
-  );
-}
-
-function Item({
-  checked,
-  onToggle,
-  name,
-  badge,
-  notes,
-  extra,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-  name: string;
-  badge: string;
-  notes: string[] | null;
-  extra?: string;
-}) {
-  return (
-    <li>
-      <label className="flex cursor-pointer items-start gap-3 px-3 py-2.5 text-sm hover:bg-nav-hover">
-        <input type="checkbox" checked={checked} onChange={onToggle} className="mt-1 accent-primary" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{name}</span>
-            <Badge>{badge}</Badge>
-            {extra && <span className="text-xs text-muted-foreground">{extra}</span>}
-          </div>
-          {notes?.map((n) => (
-            <p key={n} className="text-xs text-muted-foreground">
-              {n.charAt(0).toUpperCase() + n.slice(1)}
-            </p>
-          ))}
-        </div>
-      </label>
-    </li>
-  );
-}
-
-function SkippedList({ items, title }: { items: KumaSkipped[]; title: string }) {
-  return (
-    <details className="rounded-lg border px-3 py-2 text-sm">
-      <summary className="cursor-pointer font-medium">
-        {title} ({items.length})
-      </summary>
-      <ul className="mt-2 flex flex-col gap-1.5 pb-1">
-        {items.map((s, i) => (
-          <li key={`${s.what}-${s.name}-${i}`}>
-            <span className="font-medium">{s.name}</span>
-            <span className="text-muted-foreground">
-              {" "}
-              · {s.what}: {s.reason}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </details>
-  );
-}
-
-function ImportResult({ result, onDone }: { result: KumaImportResult; onDone: () => void }) {
-  const heartbeats = result.monitors.filter((m) => m.kind === "heartbeat");
-  return (
-    <div className="flex flex-col gap-4 text-sm">
-      <p>
-        Imported {result.monitors.length} monitor{result.monitors.length === 1 ? "" : "s"} and {result.notifiers.length}{" "}
-        notification channel{result.notifiers.length === 1 ? "" : "s"}.
-      </p>
-      {heartbeats.length > 0 && (
-        <div className="rounded-lg border border-paused/40 bg-paused/5 p-3">
-          <p className="font-medium">Point your jobs at the new ping URLs</p>
-          <p className="mt-1 text-muted-foreground">
-            Kuma&apos;s push URLs don&apos;t work here. Each heartbeat has its own:
-          </p>
-          <ul className="mt-2 flex flex-col gap-1">
-            {heartbeats.map((h) => (
-              <li key={h.id}>
-                <Link to={monitorPath(h)} className="font-medium underline">
-                  {h.name}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {result.skipped.length > 0 && <SkippedList items={result.skipped} title="Not imported" />}
-      <div>
-        <Button variant="outline" onClick={onDone}>
-          Done
         </Button>
       </div>
     </div>

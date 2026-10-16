@@ -345,11 +345,12 @@ export interface KumaPlan {
     kuma_monitor_ids: number[] | null;
     notes: string[] | null;
   }[];
-  skipped: KumaSkipped[];
+  skipped: ImportSkipped[];
 }
 
-export interface KumaSkipped {
-  what: "monitor" | "notification";
+/** Something an importer won't create, and why. */
+export interface ImportSkipped {
+  what: "monitor" | "notification" | "service";
   name: string;
   type?: string;
   reason: string;
@@ -358,7 +359,35 @@ export interface KumaSkipped {
 export interface KumaImportResult {
   monitors: { id: number; name: string; kind: MonitorKind }[];
   notifiers: { id: number; name: string }[];
-  skipped: KumaSkipped[];
+  skipped: ImportSkipped[];
+}
+
+/** What a Railway environment's services would become (internal/railway.Plan). */
+export interface RailwayPlan {
+  project_name: string;
+  environment_name: string;
+  /** The agent runs in this project and environment, so it can check services privately. */
+  same_project: boolean;
+  services: RailwayService[];
+  skipped: ImportSkipped[];
+}
+
+export interface RailwayService {
+  service_id: string;
+  monitor: Monitor;
+  notes: string[] | null;
+  // HTTP checks only: how the target is built (internal/railway.Service).
+  address?: "private" | "public";
+  private_host?: string;
+  public_host?: string;
+  /** 0 or missing when Railway doesn't know it; a private target needs one. */
+  port?: number;
+  path?: string;
+}
+
+export interface RailwayImportResult {
+  monitors: { id: number; name: string; kind: MonitorKind }[];
+  skipped: ImportSkipped[];
 }
 
 export interface Info {
@@ -698,6 +727,9 @@ export const api = {
   planKumaImport: (file: File) => upload<KumaPlan>("/api/import/kuma", file),
   applyKumaImport: (plan: Pick<KumaPlan, "sections" | "monitors" | "notifiers">) =>
     request<KumaImportResult>("POST", "/api/import/kuma/apply", plan),
+  planRailwayImport: (token: string) => request<RailwayPlan>("POST", "/api/import/railway", { token }),
+  applyRailwayImport: (services: RailwayService[]) =>
+    request<RailwayImportResult>("POST", "/api/import/railway/apply", { services }),
   activity: () => request<ActivityItem[]>("GET", "/api/activity"),
 
   notifiers: () => request<Notifier[]>("GET", "/api/notifiers"),

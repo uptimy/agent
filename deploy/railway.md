@@ -28,6 +28,8 @@ Railway's `PORT` is picked up automatically.
 
 ## Monitoring other services in the project
 
+After deploying, **Settings → Import from Railway** creates a monitor for each service in the project from a project token, using the private addresses below.
+
 Services in the same project can reach each other over private networking at `<service>.railway.internal`. Use reference variables in `MONITORS_YAML` so targets follow renames:
 
 ```yaml
