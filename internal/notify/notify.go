@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/schema"
+	"github.com/uptimy/agent/internal/version"
 )
 
 // Notifier is a configured alert channel.
@@ -31,7 +32,18 @@ type Notifier struct {
 	// later. Otherwise only the monitors in MonitorIDs alert here.
 	AllMonitors bool    `json:"all_monitors"`
 	MonitorIDs  []int64 `json:"monitor_ids"`
+
+	// RepeatSeconds reminds the channel this often while a monitor stays
+	// down and nobody has acknowledged it; 0 is off. Only for channels
+	// with Reminders.
+	RepeatSeconds int `json:"repeat_seconds"`
 }
+
+// Reminder intervals: at least every 5 minutes, at most once a day.
+const (
+	MinRepeat = 5 * 60
+	MaxRepeat = 24 * 60 * 60
+)
 
 // Config holds channel settings: one flat set of keys shared by all
 // channels; each Channel declares the keys it uses.
@@ -78,6 +90,12 @@ func (n *Notifier) Normalize() error {
 		return err
 	}
 	n.Config = cfg
+	if !ch.Reminders {
+		n.RepeatSeconds = 0
+	}
+	if n.RepeatSeconds != 0 && (n.RepeatSeconds < MinRepeat || n.RepeatSeconds > MaxRepeat) {
+		return errors.New("reminders can repeat from every 5 minutes to once a day")
+	}
 	return ch.Validate(&n.Config)
 }
 
@@ -102,6 +120,10 @@ func (c Config) onlyKeys(keys []string) (Config, error) {
 
 // Alert is what gets sent when a monitor changes state.
 type Alert struct {
+	// ID is the same on every retry of this alert, so a receiver can drop
+	// the copies when a delivery it accepted is sent again (after a timeout,
+	// or a restart mid-send). Zero for tests.
+	ID          int64     `json:"id,omitempty"`
 	MonitorID   int64     `json:"monitor_id"`
 	MonitorName string    `json:"monitor_name"`
 	Kind        string    `json:"kind"`   // "healthcheck" or "heartbeat"
@@ -109,14 +131,31 @@ type Alert struct {
 	Status      string    `json:"status"` // "up" or "down"
 	Message     string    `json:"message"`
 	Time        time.Time `json:"time"`
+	// Type is empty for a status change, AlertReminder while it stays down,
+	// or AlertAcknowledged when someone takes it on. Both have status "down".
+	Type string `json:"type,omitempty"`
+	// DownSince is when the outage began, on reminders and acknowledgements.
+	DownSince time.Time `json:"down_since,omitzero"`
+	// AcknowledgedBy is who took it on.
+	AcknowledgedBy string `json:"acknowledged_by,omitempty"`
 	// Test is set for "Send test" from the UI.
 	Test bool `json:"test,omitempty"`
 }
+
+// Alert types besides status changes.
+const (
+	AlertReminder     = "reminder"
+	AlertAcknowledged = "acknowledged"
+)
 
 // Title says what happened in a few words: "Checkout API is down", "Nightly
 // backup missed its run due 03:00 CEST". For subjects and headings.
 func (a Alert) Title() string {
 	switch {
+	case a.Type == AlertReminder:
+		return a.MonitorName + " is still down" + a.downFor()
+	case a.Type == AlertAcknowledged:
+		return a.MonitorName + ": " + a.AcknowledgedBy + " is on it"
 	case a.Kind == "heartbeat" && a.Message != "":
 		// A heartbeat's message already reads as what happened to the job.
 		return a.MonitorName + " " + a.Message
@@ -127,9 +166,40 @@ func (a Alert) Title() string {
 	}
 }
 
+// downFor is " (for 45m)", from DownSince to Time.
+func (a Alert) downFor() string {
+	if a.DownSince.IsZero() || !a.Time.After(a.DownSince) {
+		return ""
+	}
+	return " (for " + shortDuration(a.Time.Sub(a.DownSince)) + ")"
+}
+
+// shortDuration is 45m, 2h 10m or 3d 4h.
+func shortDuration(d time.Duration) string {
+	m := int(d.Round(time.Minute).Minutes())
+	switch {
+	case m < 60:
+		return fmt.Sprintf("%dm", max(m, 1))
+	case m < 24*60:
+		if m%60 == 0 {
+			return fmt.Sprintf("%dh", m/60)
+		}
+		return fmt.Sprintf("%dh %dm", m/60, m%60)
+	default:
+		h := m / 60
+		if h%24 == 0 {
+			return fmt.Sprintf("%dd", h/24)
+		}
+		return fmt.Sprintf("%dd %dh", h/24, h%24)
+	}
+}
+
 // Icon is the alert's status as an emoji.
 func (a Alert) Icon() string {
-	if a.Status == "up" {
+	switch {
+	case a.Type == AlertAcknowledged:
+		return "👀"
+	case a.Status == "up":
 		return "✅"
 	}
 	return "🔴"
@@ -138,6 +208,8 @@ func (a Alert) Icon() string {
 // Text renders the alert as a single human-readable line.
 func (a Alert) Text() string {
 	switch {
+	case a.Type != "":
+		return a.Icon() + " " + a.Title()
 	case a.Kind == "heartbeat":
 		return a.Icon() + " " + a.Title()
 	case a.Status == "up":
@@ -158,23 +230,11 @@ func NewSender(log *slog.Logger) *Sender {
 	return &Sender{client: &http.Client{Timeout: 10 * time.Second}, log: log}
 }
 
-// SendAll delivers the alert to every enabled notifier, logging failures.
-func (s *Sender) SendAll(ctx context.Context, notifiers []Notifier, a Alert) {
-	for _, n := range notifiers {
-		if !n.Enabled {
-			continue
-		}
-		if err := s.Send(ctx, n, a); err != nil {
-			s.log.Warn("notification failed", "notifier", n.Name, "type", n.Type, "err", err)
-		}
-	}
-}
-
 // Send delivers one alert to one notifier.
 func (s *Sender) Send(ctx context.Context, n Notifier, a Alert) error {
 	ch, ok := Lookup(n.Type)
 	if !ok {
-		return fmt.Errorf("unsupported notifier type %q", n.Type)
+		return Permanent(fmt.Errorf("unsupported notifier type %q", n.Type))
 	}
 	return ch.Send(ctx, s, n.Config, a)
 }
@@ -195,7 +255,7 @@ func (s *Sender) PostJSONWithHeaders(ctx context.Context, endpoint string, body 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "uptimy-agent")
+	req.Header.Set("User-Agent", version.UserAgent())
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
@@ -212,7 +272,11 @@ func (s *Sender) PostJSONWithHeaders(ctx context.Context, endpoint string, body 
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		return &HTTPError{
+			Status:     resp.StatusCode,
+			Body:       strings.TrimSpace(string(snippet)),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 	return nil
 }

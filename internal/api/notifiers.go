@@ -2,10 +2,14 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/notify"
+	"github.com/uptimy/agent/internal/store"
 )
 
 func (s *Server) listNotifiers(w http.ResponseWriter, r *http.Request) {
@@ -20,7 +24,50 @@ func (s *Server) listNotifiers(w http.ResponseWriter, r *http.Request) {
 			ns[i].Config = notify.Config{}
 		}
 	}
-	writeJSON(w, http.StatusOK, ns)
+	health, err := s.Store.ChannelHealth(r.Context(), time.Now().Add(-channelHealthWindow))
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	out := make([]notifierWithHealth, len(ns))
+	for i, n := range ns {
+		out[i] = notifierWithHealth{Notifier: n, Health: health[n.ID]}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// channelHealthWindow is how far back a channel's failures are counted.
+const channelHealthWindow = 24 * time.Hour
+
+type notifierWithHealth struct {
+	notify.Notifier
+	Health store.ChannelHealth `json:"health"`
+}
+
+// retryDelivery sends a failed or expired alert to its channel again, or
+// tries a waiting one now.
+func (s *Server) retryDelivery(w http.ResponseWriter, r *http.Request) {
+	alertID, err1 := strconv.ParseInt(r.PathValue("alert"), 10, 64)
+	notifierID, err2 := strconv.ParseInt(r.PathValue("notifier"), 10, 64)
+	if err1 != nil || err2 != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	monitorID, err := s.Store.AlertMonitor(r.Context(), alertID)
+	if err == nil {
+		err = s.Store.RetryDelivery(r.Context(), alertID, notifierID, time.Now(), s.Alerts.MaxAge)
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusConflict, "this alert was already delivered, or is waiting for maintenance to end")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	s.Alerts.Wake()
+	s.Hub.Publish(events.Message{Type: "delivery", MonitorID: monitorID})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type notifierInput struct {
@@ -30,13 +77,17 @@ type notifierInput struct {
 	Config  notify.Config `json:"config"`
 	// AllMonitors defaults to true, so a notifier made without choosing
 	// alerts for everything rather than for nothing.
-	AllMonitors *bool   `json:"all_monitors"`
-	MonitorIDs  []int64 `json:"monitor_ids"`
+	AllMonitors   *bool   `json:"all_monitors"`
+	MonitorIDs    []int64 `json:"monitor_ids"`
+	RepeatSeconds int     `json:"repeat_seconds"`
 }
 
 func (in notifierInput) notifier(id int64) notify.Notifier {
 	all := in.AllMonitors == nil || *in.AllMonitors
-	return notify.Notifier{ID: id, Name: in.Name, Type: in.Type, Enabled: in.Enabled, Config: in.Config, AllMonitors: all, MonitorIDs: in.MonitorIDs}
+	return notify.Notifier{
+		ID: id, Name: in.Name, Type: in.Type, Enabled: in.Enabled, Config: in.Config,
+		AllMonitors: all, MonitorIDs: in.MonitorIDs, RepeatSeconds: in.RepeatSeconds,
+	}
 }
 
 func (s *Server) createNotifier(w http.ResponseWriter, r *http.Request) {

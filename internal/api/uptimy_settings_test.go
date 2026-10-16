@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/config"
+	"github.com/uptimy/agent/internal/connect"
 )
 
 func connectedAgent(t *testing.T) (*client, *fakeUptimy, *fakeHeartbeat) {
@@ -32,13 +33,13 @@ func connectedAgent(t *testing.T) (*client, *fakeUptimy, *fakeHeartbeat) {
 func TestHeartbeatAlertAfter(t *testing.T) {
 	c, uptimy, hb := connectedAgent(t)
 
-	// New connections alert after 5 minutes: 1m interval + 4m grace, so a
-	// normal restart doesn't page anyone.
-	if hb.interval != 60 || hb.grace != 240 {
-		t.Fatalf("created with interval %d grace %d, want 60/240", hb.interval, hb.grace)
+	// New connections check in with every upload (the plan's interval, 60s
+	// here) and alert after two missed uploads.
+	if hb.interval != 60 || hb.grace != 60 {
+		t.Fatalf("created with interval %d grace %d, want 60/60", hb.interval, hb.grace)
 	}
 	code, body := c.do("GET", "/api/uptimy/heartbeat/settings", nil)
-	if code != 200 || body["available"] != true || body["alert_after_seconds"] != float64(300) || body["paused"] != false {
+	if code != 200 || body["available"] != true || body["alert_after_seconds"] != float64(120) || body["paused"] != false {
 		t.Fatalf("settings: %d %v", code, body)
 	}
 
@@ -109,7 +110,7 @@ func TestMaintenanceWindow(t *testing.T) {
 	conn, _ := c.srv.Store.UptimyConnection(context.Background())
 	past := time.Now().Add(-time.Minute)
 	conn.MaintenanceUntil = &past
-	c.srv.Store.UpdateUptimyConnection(context.Background(), *conn)
+	c.srv.Store.SaveUptimyConnection(context.Background(), *conn)
 
 	uptimy.mu.Lock()
 	uptimy.down = true
@@ -137,21 +138,17 @@ func TestPauseAlerts(t *testing.T) {
 	if code != 200 || body["paused"] != true || !hb.paused {
 		t.Fatalf("pause: %d %v", code, body)
 	}
-	// Paused: the agent stops checking in instead of reporting Uptimy's 404s.
-	before := uptimy.checkIns
-	_, status := c.do("POST", "/api/uptimy/heartbeat/test", nil)
-	if status["paused"] != true || status["last_error"] != nil || uptimy.checkIns != before {
-		t.Fatalf("paused agent checked in or reported an error: %v (check-ins %d -> %d)", status, before, uptimy.checkIns)
+	if _, status := c.do("GET", "/api/uptimy", nil); status["paused"] != true {
+		t.Fatalf("pause not shown: %v", status)
 	}
 	// The pause survives a restart.
 	if conn, _ := c.srv.Store.UptimyConnection(context.Background()); !conn.Paused {
 		t.Fatal("pause not remembered")
 	}
 
-	// Resuming checks in right away.
 	code, body = c.do("PUT", "/api/uptimy/heartbeat/settings", map[string]any{"paused": false})
-	if code != 200 || body["paused"] != false || hb.paused || uptimy.checkIns != before+1 {
-		t.Fatalf("resume: %d %v (check-ins %d)", code, body, uptimy.checkIns)
+	if code != 200 || body["paused"] != false || hb.paused {
+		t.Fatalf("resume: %d %v", code, body)
 	}
 
 	// A pause made in Uptimy itself is picked up too.
@@ -159,23 +156,42 @@ func TestPauseAlerts(t *testing.T) {
 	hb.paused = true
 	uptimy.mu.Unlock()
 	c.do("GET", "/api/uptimy/heartbeat/settings", nil)
-	if _, status := c.do("GET", "/api/uptimy/heartbeat", nil); status["paused"] != true {
+	if _, status := c.do("GET", "/api/uptimy", nil); status["paused"] != true {
 		t.Fatalf("pause from Uptimy not picked up: %v", status)
 	}
 }
 
 func TestHeartbeatSettingsWithoutAccount(t *testing.T) {
-	uptimy := newFakeUptimy(t)
-	c, _ := newTestServerWithConfig(t, config.Config{UptimyHeartbeatsURL: uptimy.URL})
+	c := newTestServer(t)
 	c.login("admin", adminPassword)
-	// A pasted heartbeat URL gives the agent no access to the settings.
-	c.do("PUT", "/api/uptimy/heartbeat", map[string]string{"url": uptimy.URL + "/v1/monitors/pub-manual"})
 	code, body := c.do("GET", "/api/uptimy/heartbeat/settings", nil)
 	if code != 200 || body["available"] != false {
 		t.Fatalf("settings without an account: %d %v", code, body)
 	}
 	raw, _ := json.Marshal(body["alert_after_choices"])
-	if string(raw) != "[2,5,15,30]" {
+	if string(raw) != "[2,5,10,15,30,60]" {
 		t.Fatalf("choices: %s", raw)
+	}
+}
+
+// A settings request saves only what it changes: the sync may have saved
+// the connection since the request loaded it.
+func TestSettingsKeepSyncFieldsSavedMeanwhile(t *testing.T) {
+	c, _, _ := connectedAgent(t)
+	ctx := context.Background()
+	stale, err := c.srv.Store.UptimyConnection(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The sync sets the location up again in the meantime.
+	if err := c.srv.Store.ChangeUptimyConnection(ctx, func(conn *connect.Connection) {
+		conn.LocationUUID, conn.UploadIntervalSeconds = "loc-new", 120
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.srv.settingsResponse(ctx, stale, connect.HeartbeatSettings{IntervalSeconds: 60, Paused: true})
+	conn, _ := c.srv.Store.UptimyConnection(ctx)
+	if !conn.Paused || conn.LocationUUID != "loc-new" || conn.UploadIntervalSeconds != 120 {
+		t.Fatalf("stored %+v, want paused and the sync's location kept", conn)
 	}
 }

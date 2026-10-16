@@ -1,9 +1,9 @@
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { FileCode2, Plus, ShipWheel, Wrench } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Eye, FileCode2, Plus, ShipWheel, Wrench } from "lucide-react";
+import { cn, timeAgo } from "@/lib/utils";
 import { kinds, type MonitorKind } from "@/lib/monitors";
-import { api, type MonitorSource } from "@/lib/api";
+import { api, type Acknowledgement, type MonitorSource } from "@/lib/api";
 import { describeRef, MONITOR_LABEL } from "@/lib/kubernetes";
 import { CopyField } from "@/components/ui/copy-button";
 import { buttonVariants } from "@/components/ui/button";
@@ -103,6 +103,18 @@ export function ManagedIcon({ source }: { source: MonitorSource }) {
 }
 
 /** Marks a monitor in a maintenance window: it won't alert. */
+/** Someone is on this outage: shown on down monitors that were acknowledged. */
+export function AcknowledgedBadge({ ack, long = false }: { ack: Acknowledgement; long?: boolean }) {
+  return (
+    <span
+      title={`Acknowledged by ${ack.by} ${timeAgo(ack.time)}: no more reminders for this outage`}
+      className="inline-flex items-center gap-1 rounded-full bg-paused/15 px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-paused"
+    >
+      <Eye className="size-3" /> {long ? `${ack.by} is on it · ${timeAgo(ack.time)}` : ack.by}
+    </span>
+  );
+}
+
 export function MaintenanceBadge() {
   return (
     <span

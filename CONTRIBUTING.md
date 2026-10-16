@@ -127,6 +127,7 @@ func init() {
 			{Key: "url", Label: "Message URL", Input: schema.Password, Placeholder: "https://gotify.example.com/message?token=…", Required: true, Wide: true},
 		},
 		Validate: validateWebhookURL, // may also fill defaults: it gets a *Config
+		Reminders: true, // a channel people read: reminders while down, and acknowledgements
 		Send: func(ctx context.Context, s *Sender, c Config, a Alert) error {
 			return s.PostJSON(ctx, c.URL, map[string]any{"title": a.Title(), "message": a.Text(), "priority": 8})
 		},
@@ -136,7 +137,7 @@ func init() {
 
 Settings live in the shared `Config` struct (`internal/notify/notify.go`); add a field if you need a new one. Settings that belong to other channels are dropped automatically. Mark anything secret (tokens, webhook URLs) as `schema.Password`: it's masked in the form and never sent to viewers.
 
-`a.Title()` is the alert in a few words ("Checkout API is down") and `a.Text()` a full line; `a.Test` is set for "Send test". Add a test in `internal/notify/`, against an `httptest` server (see `channels_test.go`). If Uptime Kuma has the same channel, map its settings in `internal/kuma/convert.go` too.
+`a.Title()` is the alert in a few words ("Checkout API is down", "Checkout API is still down (for 45m)") and `a.Text()` a full line; `a.Test` is set for "Send test", and `a.Type` for reminders and acknowledgements. Return the error the service gave: retries are handled for you. Errors from `PostJSON` say whether retrying can help (a 404 or 401 won't); for other protocols, wrap a refusal with `notify.Permanent` so it isn't retried. Leave `Reminders` off for paging and incident tools that track outages themselves. Add a test in `internal/notify/`, against an `httptest` server (see `channels_test.go`). If Uptime Kuma has the same channel, map its settings in `internal/kuma/convert.go` too.
 
 ## Pull requests
 

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog } from "@/components/ui/dialog";
-import { Field, Input } from "@/components/ui/input";
+import { Field, Input, PasswordInput } from "@/components/ui/input";
 import { CopyField } from "@/components/ui/copy-button";
 import { ErrorNote } from "@/components/Layout";
 import { toast } from "@/components/ui/toast";
@@ -304,9 +304,8 @@ function PasswordDialog({
         <div className="flex flex-col gap-4 border-y p-6">
           <p className="text-sm text-muted-foreground">{note}</p>
           <Field label="Your password" htmlFor="confirm-password">
-            <Input
+            <PasswordInput
               id="confirm-password"
-              type="password"
               autoComplete="current-password"
               required
               autoFocus

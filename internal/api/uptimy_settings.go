@@ -11,15 +11,14 @@ import (
 )
 
 // When Uptimy alerts about a silent agent, and how to quiet it for planned
-// work. Only for "Connect to Uptimy" connections: a pasted heartbeat URL
-// gives the agent no access to the heartbeat's settings.
+// work, for a "Connect to Uptimy Cloud" connection.
 //
 // Uptimy holds the settings (people can also change them there or with
 // uptimyctl), so every read goes to Uptimy. The agent only remembers what it
 // needs to undo: the normal grace during a maintenance window.
 
 // alertAfterChoices are the delays offered in the UI, in minutes.
-var alertAfterChoices = []int{2, 5, 15, 30}
+var alertAfterChoices = []int{2, 5, 10, 15, 30, 60}
 
 // maintenanceChoices are the maintenance windows offered in the UI, in minutes.
 var maintenanceChoices = []int{30, 60, 240}
@@ -37,6 +36,31 @@ type heartbeatSettingsResponse struct {
 	MaintenanceChoices      []int `json:"maintenance_choices"`
 }
 
+// checkInInterval is how often the agent checks in: with every upload, at the
+// plan's check interval (5 minutes until the sync knows it).
+func checkInInterval(conn *connect.Connection) time.Duration {
+	if conn.UploadIntervalSeconds > 0 {
+		return time.Duration(conn.UploadIntervalSeconds) * time.Second
+	}
+	return 5 * time.Minute
+}
+
+// alertAfterChoicesFor offers only delays of at least two check-ins, so one
+// late upload never alerts.
+func alertAfterChoicesFor(conn *connect.Connection) []int {
+	minimum := int((2 * checkInInterval(conn)).Minutes())
+	var out []int
+	for _, m := range alertAfterChoices {
+		if m >= minimum {
+			out = append(out, m)
+		}
+	}
+	if len(out) == 0 {
+		out = []int{minimum}
+	}
+	return out
+}
+
 func (s *Server) uptimyClient() *connect.Client {
 	return connect.NewClient(s.Config.UptimyAPIURL, s.Config.UptimyHeartbeatsURL)
 }
@@ -44,10 +68,14 @@ func (s *Server) uptimyClient() *connect.Client {
 // settingsResponse describes hs, keeping the watchdog in step with a pause
 // made in Uptimy itself.
 func (s *Server) settingsResponse(ctx context.Context, conn *connect.Connection, hs connect.HeartbeatSettings) heartbeatSettingsResponse {
-	s.Watchdog.SetPaused(ctx, hs.Paused)
+	if conn.Paused && !hs.Paused {
+		s.Sync.Trigger() // resumed: check in right away
+	}
 	if conn.Paused != hs.Paused {
 		conn.Paused = hs.Paused
-		if err := s.Store.UpdateUptimyConnection(ctx, *conn); err != nil {
+		// conn was loaded earlier in the request: change only this, so what the
+		// sync saved in the meantime stays.
+		if err := s.Store.ChangeUptimyConnection(ctx, func(c *connect.Connection) { c.Paused = hs.Paused }); err != nil {
 			s.Log.Warn("saving the Uptimy connection", "err", err)
 		}
 	}
@@ -55,7 +83,7 @@ func (s *Server) settingsResponse(ctx context.Context, conn *connect.Connection,
 		Available:          true,
 		AlertAfterSeconds:  int(hs.AlertAfter().Seconds()),
 		Paused:             hs.Paused,
-		AlertAfterChoices:  alertAfterChoices,
+		AlertAfterChoices:  alertAfterChoicesFor(conn),
 		MaintenanceChoices: maintenanceChoices,
 	}
 	if conn.MaintenanceUntil != nil {
@@ -73,7 +101,7 @@ func (s *Server) connectionForSettings(w http.ResponseWriter, r *http.Request) *
 		s.internalError(w, r, err)
 		return nil
 	}
-	if conn == nil || s.Watchdog.ManagedByEnv() {
+	if conn == nil {
 		writeJSON(w, http.StatusOK, heartbeatSettingsResponse{AlertAfterChoices: alertAfterChoices, MaintenanceChoices: maintenanceChoices})
 		return nil
 	}
@@ -123,11 +151,11 @@ func (s *Server) updateHeartbeatSettings(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusConflict, "end the maintenance window first")
 			return
 		}
-		if !slices.Contains(alertAfterChoices, *in.AlertAfterSeconds/60) || *in.AlertAfterSeconds%60 != 0 {
+		if !slices.Contains(alertAfterChoicesFor(conn), *in.AlertAfterSeconds/60) || *in.AlertAfterSeconds%60 != 0 {
 			writeError(w, http.StatusBadRequest, "unsupported delay")
 			return
 		}
-		g := connect.GraceFor(time.Duration(*in.AlertAfterSeconds) * time.Second)
+		g := connect.GraceFor(time.Duration(*in.AlertAfterSeconds)*time.Second, checkInInterval(conn))
 		grace = &g
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -180,7 +208,9 @@ func (s *Server) startUptimyMaintenance(w http.ResponseWriter, r *http.Request) 
 	}
 	until := time.Now().UTC().Add(window)
 	conn.MaintenanceUntil = &until
-	if err := s.Store.UpdateUptimyConnection(r.Context(), *conn); err != nil {
+	if err := s.Store.ChangeUptimyConnection(r.Context(), func(c *connect.Connection) {
+		c.MaintenanceUntil, c.NormalGraceSeconds = conn.MaintenanceUntil, conn.NormalGraceSeconds
+	}); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -215,20 +245,11 @@ func (s *Server) restoreAfterMaintenance(ctx context.Context, conn *connect.Conn
 		return hs, err
 	}
 	conn.MaintenanceUntil, conn.NormalGraceSeconds = nil, 0
-	if err := s.Store.UpdateUptimyConnection(ctx, *conn); err != nil {
+	if err := s.Store.ChangeUptimyConnection(ctx, func(c *connect.Connection) { c.MaintenanceUntil, c.NormalGraceSeconds = nil, 0 }); err != nil {
 		return hs, err
 	}
 	s.Log.Info("maintenance window ended; normal alerting restored")
 	return hs, nil
-}
-
-// RestorePaused carries a heartbeat paused from the agent over a restart, so
-// the agent doesn't report check-ins that Uptimy rejects on purpose. Call it
-// before the watchdog starts.
-func (s *Server) RestorePaused(ctx context.Context) {
-	if conn, err := s.Store.UptimyConnection(ctx); err == nil && conn != nil && conn.Paused {
-		s.Watchdog.SetPaused(ctx, true)
-	}
 }
 
 // RunUptimyMaintenance restores normal alerting when a maintenance window

@@ -20,6 +20,8 @@ export interface Check {
   interval_seconds: number;
   timeout_seconds: number;
   failure_threshold: number;
+  /** Consecutive successes before a down healthcheck is up again. */
+  recovery_threshold: number;
   config: Record<string, ConfigValue>;
 }
 
@@ -60,6 +62,37 @@ export interface MonitorEvent {
   time: string;
   status: Status;
   message: string;
+  /** How the change's alert went on each channel; absent when it didn't alert. */
+  deliveries?: Delivery[];
+}
+
+/** One alert on one channel (internal/notify.Delivery). */
+export type DeliveryState = "pending" | "held" | "sent" | "failed" | "expired" | "suppressed";
+
+export interface Delivery {
+  alert_id: number;
+  /** Absent for a status change. */
+  alert_type?: "reminder" | "acknowledged";
+  notifier_id: number;
+  notifier_name: string;
+  notifier_type: string;
+  state: DeliveryState;
+  attempts: number;
+  /** When a pending delivery is tried next. */
+  next_attempt_at?: string;
+  /** The last error, or why it wasn't sent. */
+  detail?: string;
+  done_at: string | null;
+}
+
+/** A channel's recent deliveries (store.ChannelHealth). */
+export interface ChannelHealth {
+  /** The newest delivery that was sent, failed or expired. */
+  last: Delivery | null;
+  /** Deliveries that failed or expired in the last 24 hours. */
+  failed: number;
+  /** Deliveries waiting to be sent, retries included. */
+  pending: number;
 }
 
 export interface ActivityItem extends MonitorEvent {
@@ -96,6 +129,14 @@ export interface HealthcheckSummary extends Healthcheck {
   uptime_24h: number | null;
   avg_latency_24h: number | null;
   in_maintenance: boolean;
+  /** Who's on the current outage, if anyone. */
+  acknowledged: Acknowledgement | null;
+}
+
+/** Someone taking on an outage: reminders stop until the next status change. */
+export interface Acknowledgement {
+  by: string;
+  time: string;
 }
 
 interface Uptime {
@@ -167,6 +208,8 @@ export interface HeartbeatSummary extends Heartbeat {
   recent: Run[];
   stats_30d: RunStats;
   in_maintenance: boolean;
+  /** Who's on the current outage, if anyone. */
+  acknowledged: Acknowledgement | null;
 }
 
 export interface HeartbeatDetail {
@@ -208,6 +251,8 @@ export interface NotifierChannel {
   help: string;
   order: number;
   fields: SchemaField[];
+  /** Whether it can remind while a monitor stays down (chat, email, push; not paging tools). */
+  reminders: boolean;
 }
 
 export interface Notifier {
@@ -220,9 +265,12 @@ export interface Notifier {
   // Alerts for every monitor, or only those in monitor_ids.
   all_monitors: boolean;
   monitor_ids: number[];
+  /** Remind this often while a monitor stays down and nobody acknowledged it; 0 is off. */
+  repeat_seconds: number;
+  health: ChannelHealth;
 }
 
-export type NotifierInput = Omit<Notifier, "id" | "created_at">;
+export type NotifierInput = Omit<Notifier, "id" | "created_at" | "health">;
 
 // ── Incidents ─────────────────────────────────────────────────────────────
 
@@ -291,12 +339,18 @@ export interface KumaPlan {
   /** Kuma's status page groups, which become sections. */
   sections: StatusSection[];
   monitors: { kuma_id: number; monitor: Monitor; notes: string[] | null }[];
-  notifiers: { kuma_id: number; notifier: Notifier; kuma_monitor_ids: number[] | null; notes: string[] | null }[];
-  skipped: KumaSkipped[];
+  notifiers: {
+    kuma_id: number;
+    notifier: Omit<Notifier, "health">;
+    kuma_monitor_ids: number[] | null;
+    notes: string[] | null;
+  }[];
+  skipped: ImportSkipped[];
 }
 
-export interface KumaSkipped {
-  what: "monitor" | "notification";
+/** Something an importer won't create, and why. */
+export interface ImportSkipped {
+  what: "monitor" | "notification" | "service";
   name: string;
   type?: string;
   reason: string;
@@ -305,7 +359,35 @@ export interface KumaSkipped {
 export interface KumaImportResult {
   monitors: { id: number; name: string; kind: MonitorKind }[];
   notifiers: { id: number; name: string }[];
-  skipped: KumaSkipped[];
+  skipped: ImportSkipped[];
+}
+
+/** What a Railway environment's services would become (internal/railway.Plan). */
+export interface RailwayPlan {
+  project_name: string;
+  environment_name: string;
+  /** The agent runs in this project and environment, so it can check services privately. */
+  same_project: boolean;
+  services: RailwayService[];
+  skipped: ImportSkipped[];
+}
+
+export interface RailwayService {
+  service_id: string;
+  monitor: Monitor;
+  notes: string[] | null;
+  // HTTP checks only: how the target is built (internal/railway.Service).
+  address?: "private" | "public";
+  private_host?: string;
+  public_host?: string;
+  /** 0 or missing when Railway doesn't know it; a private target needs one. */
+  port?: number;
+  path?: string;
+}
+
+export interface RailwayImportResult {
+  monitors: { id: number; name: string; kind: MonitorKind }[];
+  skipped: ImportSkipped[];
 }
 
 export interface Info {
@@ -313,11 +395,22 @@ export interface Info {
   kubernetes: boolean;
   /** Kubernetes discovery is running (in a cluster, not turned off). */
   discovery: boolean;
-  uptimy_heartbeat: boolean;
+  /** Connected to Uptimy Cloud. */
+  uptimy_connected: boolean;
   status_page_enabled: boolean;
   status_page_title: string;
   monitors_file: boolean;
+  /** What was wrong with the monitors file at startup; null when nothing. */
+  monitors_file_error: MonitorsFileProblem | null;
   retention_days: number;
+}
+
+/** A monitors file with problems: held back entirely, or applied without the monitors in errors. */
+export interface MonitorsFileProblem {
+  /** The file's name, or MONITORS_YAML. */
+  file: string;
+  applied: boolean;
+  errors: string[];
 }
 
 /** How Kubernetes discovery is doing: its last scan and what it couldn't use. */
@@ -347,24 +440,36 @@ export interface KubeResources {
   truncated: string[];
 }
 
-export interface UptimyCheckIn {
-  enabled: boolean;
-  // Set when connected with "Connect to Uptimy" (vs. a pasted URL or env var).
+// The agent's Uptimy Cloud connection ("Connect to Uptimy Cloud").
+export interface UptimyStatus {
+  connected: boolean;
+  // Paused in Uptimy: nobody is alerted when the agent goes silent.
+  paused: boolean;
   account: { workspace_name: string; connected_at: string; connected_by: string } | null;
+  // Uploads are the agent's check-in.
+  sync?: CloudSync;
   // Only on disconnect: something couldn't be cleaned up in Uptimy.
   warning?: string;
-  url?: string;
-  managed_by_env: boolean;
-  interval_seconds: number;
-  last_ping_at: string | null;
-  last_ok: boolean;
-  last_error?: string;
-  // Paused in Uptimy: the agent doesn't check in and nobody is alerted.
-  paused: boolean;
 }
 
-// When Uptimy alerts about a silent agent. Only available for a
-// "Connect to Uptimy" connection; Uptimy holds the values.
+export interface CloudSync {
+  active: boolean;
+  location_uuid?: string;
+  upload_interval_seconds?: number;
+  last_upload_at?: string;
+  last_error?: string;
+  // The workspace's plan has no room for this agent: Cloud doesn't take its results.
+  over_plan?: boolean;
+  healthchecks: number;
+  heartbeats: number;
+  // Monitors that couldn't be mirrored, and why.
+  not_synced?: { name: string; reason: string }[];
+  // Results Uptimy rejected for their time: the agent's clock is likely off.
+  rejected_too_old?: number;
+  rejected_clock_ahead?: number;
+}
+
+// When Uptimy alerts about a silent agent; Uptimy holds the values.
 export interface UptimyAlerting {
   available: boolean;
   alert_after_seconds?: number;
@@ -594,6 +699,7 @@ export const api = {
     request<SchedulePreview>("POST", "/api/heartbeats/preview", spec),
 
   // Both kinds: kind picks /api/healthchecks or /api/heartbeats.
+  acknowledge: (kind: MonitorKind, id: number) => request<void>("POST", `/api/${kind}s/${id}/acknowledge`),
   pauseMonitor: (kind: MonitorKind, id: number, paused: boolean) =>
     request<Monitor>("POST", `/api/${kind}s/${id}/pause`, { paused }),
   deleteMonitor: (kind: MonitorKind, id: number) => request<void>("DELETE", `/api/${kind}s/${id}`),
@@ -621,6 +727,9 @@ export const api = {
   planKumaImport: (file: File) => upload<KumaPlan>("/api/import/kuma", file),
   applyKumaImport: (plan: Pick<KumaPlan, "sections" | "monitors" | "notifiers">) =>
     request<KumaImportResult>("POST", "/api/import/kuma/apply", plan),
+  planRailwayImport: (token: string) => request<RailwayPlan>("POST", "/api/import/railway", { token }),
+  applyRailwayImport: (services: RailwayService[]) =>
+    request<RailwayImportResult>("POST", "/api/import/railway/apply", { services }),
   activity: () => request<ActivityItem[]>("GET", "/api/activity"),
 
   notifiers: () => request<Notifier[]>("GET", "/api/notifiers"),
@@ -629,11 +738,12 @@ export const api = {
   updateNotifier: (id: number, n: NotifierInput) => request<Notifier>("PUT", `/api/notifiers/${id}`, n),
   deleteNotifier: (id: number) => request<void>("DELETE", `/api/notifiers/${id}`),
   testNotifier: (id: number) => request("POST", `/api/notifiers/${id}/test`),
+  retryDelivery: (d: Pick<Delivery, "alert_id" | "notifier_id">) =>
+    request<void>("POST", `/api/alerts/${d.alert_id}/deliveries/${d.notifier_id}/retry`),
 
-  uptimyCheckIn: () => request<UptimyCheckIn>("GET", "/api/uptimy/heartbeat"),
-  connectUptimyURL: (url: string) => request<UptimyCheckIn>("PUT", "/api/uptimy/heartbeat", { url }),
-  disconnectUptimy: () => request<UptimyCheckIn>("DELETE", "/api/uptimy/heartbeat"),
-  testUptimyCheckIn: () => request<UptimyCheckIn>("POST", "/api/uptimy/heartbeat/test"),
+  uptimyStatus: () => request<UptimyStatus>("GET", "/api/uptimy"),
+  disconnectUptimy: () => request<UptimyStatus>("DELETE", "/api/uptimy"),
+  uploadToUptimy: () => request<UptimyStatus>("POST", "/api/uptimy/upload"),
   uptimyAlerting: () => request<UptimyAlerting>("GET", "/api/uptimy/heartbeat/settings"),
   updateUptimyAlerting: (patch: { alert_after_seconds?: number; paused?: boolean }) =>
     request<UptimyAlerting>("PUT", "/api/uptimy/heartbeat/settings", patch),
@@ -643,7 +753,7 @@ export const api = {
   startUptimyConnect: (origin: string) =>
     request<{ authorize_url: string }>("POST", "/api/uptimy/connect/start", { origin }),
   finishUptimyConnect: (state: string, code: string) =>
-    request<UptimyCheckIn>("POST", "/api/uptimy/connect/finish", { state, code }),
+    request<UptimyStatus>("POST", "/api/uptimy/connect/finish", { state, code }),
 
   announcement: () => request<Announcement | null>("GET", "/api/status-page/announcement"),
   saveAnnouncement: (a: { title: string; message: string; show_until: string | null }) =>

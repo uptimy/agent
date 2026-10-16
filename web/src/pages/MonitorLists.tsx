@@ -11,6 +11,7 @@ import { MonitorEmpty } from "@/components/MonitorEmpty";
 import { HealthcheckList } from "@/components/HealthcheckList";
 import { HeartbeatList } from "@/components/HeartbeatList";
 import { useCanEdit } from "@/components/AuthGate";
+import { MonitorsFileNotice } from "@/components/MonitorsFileNotice";
 
 /** The Healthchecks page. */
 export function HealthchecksPage() {
@@ -84,6 +85,7 @@ function ListPage<T extends { name: string; status: Status }>({
         actions={all.length > 0 && <NewButton kind={kind} />}
       />
       <ErrorNote error={query.error} />
+      <MonitorsFileNotice />
 
       {query.isSuccess &&
         (all.length === 0 ? (

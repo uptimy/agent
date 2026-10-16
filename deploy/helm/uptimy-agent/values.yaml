@@ -13,12 +13,6 @@ existingSecret: ""         # Secret with key ADMIN_PASSWORD
 # (the pod's hostname would change on every restart).
 agentName: ""
 
-# Optional: "Connect to Uptimy" in the agent's Settings does this with one
-# click. Set heartbeatUrl only to pin it in config (read-only in the UI).
-uptimy:
-  heartbeatUrl: ""
-  existingSecret: ""       # Secret with key UPTIMY_HEARTBEAT_URL
-
 # Declarative monitors, rendered into a ConfigMap. Same schema as
 # examples/monitors.yaml. Leave both empty to manage monitors in the UI only.
 healthchecks: []
@@ -39,6 +33,12 @@ heartbeats: []
 #    grace: 30m
 
 retentionDays: 30
+
+# Proxies whose X-Forwarded-For/-Proto headers are believed (sign-in rate
+# limits per client, Secure cookies behind TLS-terminating Ingresses):
+# "private" (loopback and private networks, where Ingress controllers
+# connect from), comma-separated addresses or CIDRs, or "none".
+trustedProxies: private
 
 # Create monitors for Services, Ingresses, HTTPRoutes and workloads labeled
 # upti.my/monitor: "true" (see the chart README). Nothing is monitored until

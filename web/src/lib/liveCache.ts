@@ -7,7 +7,8 @@ export type LiveMessage =
   | { type: "run"; monitor_id: number } // a heartbeat run started, finished or was missed
   | { type: "heartbeat"; monitor_id: number } // a heartbeat became late (or on time again)
   | { type: "status"; monitor_id: number; data: MonitorEvent }
-  | { type: "monitors"; monitor_id: number };
+  | { type: "monitors"; monitor_id: number }
+  | { type: "delivery"; monitor_id: number }; // an alert was sent, failed, retried, held or released
 
 /** Bars shown per healthcheck; matches the server's recentResults. */
 export const RECENT_SLOTS = 40;

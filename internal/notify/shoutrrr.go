@@ -20,8 +20,9 @@ const shoutrrrTimeout = 10 * time.Second
 
 func init() {
 	Register(Channel{
-		Type:  "shoutrrr",
-		Label: "More services (Shoutrrr)",
+		Type:      "shoutrrr",
+		Reminders: true,
+		Label:     "More services (Shoutrrr)",
 		Help: "One URL for any of 30+ services Shoutrrr supports: Pushover, Gotify, Matrix, Google Chat, Mattermost, Rocket.Chat, " +
 			"Opsgenie, Signal, Zulip, Home Assistant, MQTT, Bark and more. The URL format for each is at https://shoutrrr.nickfedor.com/latest/services/overview/.",
 		Order: 90,

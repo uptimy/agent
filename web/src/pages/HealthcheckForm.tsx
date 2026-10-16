@@ -20,7 +20,15 @@ import { useCanEdit } from "@/components/AuthGate";
 const empty: HealthcheckInput = {
   name: "",
   paused: false,
-  check: { type: "http", target: "", interval_seconds: 60, timeout_seconds: 10, failure_threshold: 2, config: {} },
+  check: {
+    type: "http",
+    target: "",
+    interval_seconds: 60,
+    timeout_seconds: 10,
+    failure_threshold: 2,
+    recovery_threshold: 1,
+    config: {},
+  },
   notifier_ids: [],
 };
 
@@ -120,7 +128,7 @@ function HealthcheckFormBody({ editing, initial }: { editing: number | null; ini
         </>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Check every (s)" htmlFor="interval">
           <Input
             id="interval"
@@ -147,6 +155,16 @@ function HealthcheckFormBody({ editing, initial }: { editing: number | null; ini
             max={10}
             value={check.failure_threshold}
             onChange={(e) => setCheck("failure_threshold", Number(e.target.value))}
+          />
+        </Field>
+        <Field label="Recover after successes" htmlFor="recovery" hint="Consecutive good checks once down">
+          <Input
+            id="recovery"
+            type="number"
+            min={1}
+            max={10}
+            value={check.recovery_threshold}
+            onChange={(e) => setCheck("recovery_threshold", Number(e.target.value))}
           />
         </Field>
       </div>

@@ -23,12 +23,18 @@ type healthcheckSummary struct {
 	Uptime24h     *float64         `json:"uptime_24h"`
 	AvgLatency24h *float64         `json:"avg_latency_24h"`
 	InMaintenance bool             `json:"in_maintenance"`
+	// Acknowledged is who's on the current outage, if anyone.
+	Acknowledged *monitor.Acknowledgement `json:"acknowledged"`
 }
 
 func (s *Server) summarizeHealthcheck(r *http.Request, m monitor.Monitor) (healthcheckSummary, error) {
 	sum := healthcheckSummary{
 		Monitor: redactForViewer(r, m), Status: s.Scheduler.Status(m), Target: m.Describe(),
 		InMaintenance: s.Scheduler.InMaintenance(m.ID),
+	}
+	var err error
+	if sum.Acknowledged, err = s.Store.Acknowledgement(r.Context(), m.ID); err != nil {
+		return sum, err
 	}
 	recent, err := s.Store.RecentResults(r.Context(), m.ID, recentResults)
 	if err != nil {

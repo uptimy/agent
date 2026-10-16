@@ -87,6 +87,10 @@ func convertMonitor(r row) (m monitor.Monitor, notes []string, reason string) {
 	default:
 		return m, nil, fmt.Sprintf("%s monitors aren't supported yet", kumaTypeName(typ))
 	}
+	if n := r.int("resend_interval"); n > 0 {
+		// Kuma repeats per monitor, every n checks; the agent per channel.
+		notes = append(notes, fmt.Sprintf("Kuma re-sent its alert every %d checks while down: turn on \"Remind while down\" on its channels", n))
+	}
 	m.Kind, m.Check = monitor.KindHealthcheck, c
 	return m, notes, ""
 }

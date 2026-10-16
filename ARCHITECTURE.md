@@ -14,7 +14,7 @@ flowchart LR
         Hub["events<br/>live update hub"]
         Files["filesync<br/>YAML monitors"]
         Discovery["discovery<br/>labeled k8s resources"]
-        Watchdog["connect<br/>Uptimy heartbeat"]
+        Sync["cloudsync<br/>Uptimy Cloud sync"]
     end
 
     Browser((Browser)) --> API
@@ -32,7 +32,8 @@ flowchart LR
     Hub -- SSE --> Browser
     Sched --> Notify
     Notify --> Channels[(Slack · Discord<br/>Telegram · webhooks)]
-    Watchdog -- check-in --> Uptimy[(Uptimy)]
+    Store --> Sync
+    Sync -- mirrors + results --> Uptimy[(Uptimy)]
 ```
 
 ## Two kinds of monitor
@@ -55,7 +56,7 @@ In SQLite a `monitors` row holds what's shared, and a `healthchecks` or `heartbe
 2. The scheduler runs one goroutine per monitor. For a healthcheck it calls `checks.Run` on every interval, with the check's timeout.
 3. `checks.Run` finds the check type's **probe** (registered by `internal/checks/<type>.go`) and returns an `Outcome`: OK, plus a message.
 4. The scheduler stores the result and publishes it to the **events hub**, which streams it to open browsers over Server-Sent Events.
-5. The healthcheck goes down after `failure_threshold` consecutive failures and up on the next success. Each change is recorded as an **event**; going down, and recovering from down, also sends an **alert** to every enabled notification channel.
+5. The healthcheck goes down after `failure_threshold` consecutive failures and up again after `recovery_threshold` consecutive successes. Each change is recorded as an **event**; going down, and recovering from down, also sends an **alert** to every enabled notification channel.
 
 ## A heartbeat, end to end
 
@@ -67,7 +68,25 @@ In SQLite a `monitors` row holds what's shared, and a `healthchecks` or `heartbe
 
 ## Alerts
 
-An alert goes to the enabled channels that cover the monitor: those for every monitor, and those it's been added to (`store.NotifiersFor`). During a maintenance window covering the monitor, a down alert is held instead (`scheduler/maintenance.go`). When the window ends, a monitor that's still down alerts then; one that recovered sends nothing, since nobody heard it went down. Held alerts live in memory, so a restart during maintenance forgets them.
+Alerts go through an outbox, so none is lost to a failing channel, a crash or a restart:
+
+1. The scheduler records a status change and its alert in **one transaction** (`store.InsertEventAlert`): an `alerts` row with the alert as it will be sent, and an `alert_deliveries` row for each enabled channel that covers the monitor (those for every monitor, and those it's been added to). A change is never recorded without its alert.
+2. The **dispatcher** (`internal/delivery`) sends due deliveries, each channel separately. Failures are retried with backoff for up to `delivery.MaxAge` (an hour); a refusal (`notify.IsPermanent`: a 4xx other than 408/429, or an SMTP 5xx) fails at once. Deliveries along one channel and monitor go strictly in order, so a recovery waits for its outage. A recovery is suppressed on a channel that was alerted about the outage but never got any of those alerts.
+3. Each attempt's outcome is saved on the delivery and pushed to the UI. Pending deliveries are picked up again on the next start, so delivery is at least once; the alert's `id` lets receivers drop copies.
+
+During a maintenance window covering the monitor, a down alert's deliveries are **held** (`scheduler/maintenance.go`). When the window ends, a monitor that's still down (by its newest event, so this works right after a restart) has its alert released as "still down after maintenance"; one that recovered had both its outage and recovery suppressed, since nobody heard it went down.
+
+While a monitor stays down, channels with a repeat interval get **reminders** (`scheduler/reminders.go`), counted from the last alert each one got. **Acknowledging** the outage stores who's on it, stops the reminders and tells the channels. Any status change ends both, in the same transaction as the event. Reminders and acknowledgements are alerts of their own `type`, delivered like any other, and only to channels with `Reminders` (not paging or incident tools, which track outages themselves).
+
+## Uptimy Cloud sync
+
+`internal/cloudsync` runs for a "Connect to Uptimy Cloud" connection (design: `AGENT_CLOUD_SYNC_PLAN.md` in the uptimy repo). The agent stays the source of truth; Cloud gets a read-only copy.
+
+1. **Set up** once per connection: register the agent's private location (`PUT /v1/api/agent/location`, keyed by the install id) and its `agent_liveness` check-in heartbeat at the plan's upload interval. Every upload is the check-in.
+2. **Mirror** monitors: each cycle sends the ones whose definition changed (`cloud_monitors.hash`) and deletes mirrors of deleted ones; every 10 minutes it also compares with Cloud's own lists. Healthchecks go to upti.my-api, heartbeats to upti.my-heartbeat with `source: agent`.
+3. **Upload** to `ingest.upti.my`: results after `results.rowid` and finished runs after `runs.id` (never past one still running), each with the status the agent had then (from `events`: down, or up/degraded by the result), thinned to one result per monitor per interval plus every status change. A batch's id comes from its cursors, so a retry is deduplicated; cursors move only once Cloud accepts it. 429 waits for `Retry-After`, 409 sets the location up again, and a plan limit keeps the cursor until the agent fits the plan.
+
+A cycle runs every upload interval and a few seconds after a monitor or its status changes (`events` hub).
 
 ## Extension points
 
@@ -93,6 +112,8 @@ SQLite through `modernc.org/sqlite` (pure Go, so the binary builds without cgo),
 | Healthchecks, heartbeats | `monitors` + `healthchecks` / `heartbeats` | `monitor.Monitor` |
 | History | `results`, `runs`, `events` | `monitor.Result`, `monitor.Run`, `monitor.Event` |
 | Alert routing | `notifiers.all_monitors` + `notifier_monitors` | `notify.Notifier` (`AllMonitors`, `MonitorIDs`) |
+| Alerts and their delivery to each channel (the outbox) | `alerts` + `alert_deliveries` | `notify.Alert`, `notify.Delivery` |
+| Who's on an outage | `acknowledgements` | `monitor.Acknowledgement` |
 | Maintenance windows | `maintenance` + `maintenance_monitors` | `maintenance.Window` |
 | Incidents | `incidents` + `incident_updates` + `incident_monitors` | `incident.Incident` |
 | The status page's announcement | `settings` (JSON, apart from the page's settings) | `statuspage.Announcement` |
@@ -100,14 +121,14 @@ SQLite through `modernc.org/sqlite` (pure Go, so the binary builds without cgo),
 | Status page settings and logos | `settings` (JSON) | `statuspage.Settings`, `statuspage.Logo` |
 | Which monitors the status page shows, and how | columns on `monitors`, written only by the status page editor | `monitor.Monitor` (`Public`, `Status*`) |
 | The Uptimy connection | `settings` (JSON) | `connect.Connection` |
+| Monitors mirrored to Uptimy Cloud, and the upload cursors | `cloud_monitors`, `settings` | `store.CloudMonitor` |
 
-Domain packages own the types and `internal/store` persists them; users, which only the store and sign-in use, are the exception. Settings rows are read and written only through typed methods (`StatusPage`, `SaveStatusPage`, `UptimyConnection`, ...), and their keys never leave the store. Changes that belong together (the page's settings and its layout, a connection and its check-in URL) are saved in one transaction.
+Domain packages own the types and `internal/store` persists them; users, which only the store and sign-in use, are the exception. Settings rows are read and written only through typed methods (`StatusPage`, `SaveStatusPage`, `UptimyConnection`, ...), and their keys never leave the store. Changes that belong together (the page's settings and its layout, a connection and the settings saved with it) are saved in one transaction.
 
-Environment variables don't hold data. They set how the process runs (`PORT`, `DATA_DIR`, `RETENTION_DAYS`, ...) and three things that suit config better than a database:
+Environment variables don't hold data. They set how the process runs (`PORT`, `DATA_DIR`, `RETENTION_DAYS`, ...) and two things that suit config better than a database:
 
 - `ADMIN_PASSWORD` creates the first admin and resets that admin's password on every start (the recovery path). The UI won't change a password the environment sets.
-- `UPTIMY_HEARTBEAT_URL` pins Watch the watcher, read-only in the UI, for agents without a persistent volume.
-- `MONITORS_FILE` / `MONITORS_YAML` declare monitors. They're synced into the database on start, matched by name, and read-only in the UI.
+- `MONITORS_FILE` / `MONITORS_YAML` declare monitors. They're synced into the database on start, matched by name, and read-only in the UI. A file that doesn't parse is held back whole and invalid monitors are skipped (`filesync.Apply`); the problem goes to the log and `/api/info`, never stops the agent.
 
 ## The UI
 
@@ -123,7 +144,7 @@ Live data comes from the SSE stream. Healthcheck results, which arrive constantl
 - **The public status page** shows names with uptime or on-time rate only, never targets, schedules or internal hostnames.
 - **Ping URLs** are the only credential a job needs, so they're random (144 bits) and can be replaced from the heartbeat's page. A ping can only record a run for its own heartbeat.
 - **Database targets** can read passwords from environment variables (`${VAR}`) so they aren't stored, but never the agent's own settings (`ADMIN_PASSWORD`, `UPTIMY_*`). Custom queries run read-only.
-- **The Uptimy connection** uses an agent-scoped key that can only manage the agent's own heartbeat; it's kept on the server and revoked on disconnect.
+- **The Uptimy connection** uses an agent-scoped key that can only manage the agent's own location, its mirrored monitors and its check-in; it's kept on the server and revoked on disconnect. Mirrored targets have passwords and secret query parameters masked.
 - **Errors** are scrubbed of secrets before they're shown or logged (URLs with tokens, connection strings).
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).

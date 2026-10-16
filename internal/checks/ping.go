@@ -31,7 +31,7 @@ func init() {
 func ping(ctx context.Context, host string) Outcome {
 	ip, err := resolveOne(ctx, host)
 	if err != nil {
-		return Outcome{Message: trimErr(err)}
+		return Outcome{Message: trimErr(err), ErrorClass: classDNS}
 	}
 	conn, err := listenICMP(ip)
 	if err != nil {
@@ -72,7 +72,12 @@ func pingOutcome(received, sent int, total time.Duration, lastErr error) Outcome
 		if lastErr != nil && !errors.Is(lastErr, os.ErrDeadlineExceeded) && !errors.Is(lastErr, context.DeadlineExceeded) {
 			msg += ": " + trimErr(lastErr)
 		}
-		return Outcome{Message: msg}
+		// No reply in time is a timeout; a send that failed says why.
+		class := classTimeout
+		if lastErr != nil && !errors.Is(lastErr, os.ErrDeadlineExceeded) && !errors.Is(lastErr, context.DeadlineExceeded) {
+			class = classify(lastErr)
+		}
+		return Outcome{Message: msg, ErrorClass: class}
 	}
 	avg := total / time.Duration(received)
 	msg := fmt.Sprintf("%d/%d replies, %s average", received, sent, avg.Round(100*time.Microsecond))

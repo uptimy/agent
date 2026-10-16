@@ -167,3 +167,80 @@ func TestExampleFileParses(t *testing.T) {
 		t.Error("examples/monitors.yaml should show heartbeats with an interval and with cron")
 	}
 }
+
+// A file with mistakes never stops the agent: it applies what it can.
+func TestApply(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if res, err := Apply(ctx, st, []byte(doc)); err != nil || res.Created != 4 || len(res.Problems) > 0 {
+		t.Fatalf("first apply: %+v %v", res, err)
+	}
+	api := find(t, st, "API")
+
+	// A syntax error holds the whole file back: nothing changes.
+	res, err := Apply(ctx, st, []byte("healthchecks:\n  - name: API\n   type: http\n"))
+	if err != nil || !res.Held || len(res.Problems) != 1 || res.Created+res.Updated+res.Deleted != 0 {
+		t.Fatalf("syntax error: %+v %v", res, err)
+	}
+	// So do a misspelled setting and two monitors with one name.
+	for _, bad := range []string{
+		"healthchecks:\n  - {name: API, type: tcp, target: x:1, intervall: 30s}\n",
+		"healthchecks:\n  - {name: a, type: tcp, target: x:1}\n  - {name: a, type: tcp, target: x:2}\n",
+	} {
+		if res, err := Apply(ctx, st, []byte(bad)); err != nil || !res.Held {
+			t.Fatalf("%q: %+v %v", bad, res, err)
+		}
+	}
+	if all, _ := st.ListMonitors(ctx); len(all) != 4 {
+		t.Fatalf("a held file changed the monitors: %d", len(all))
+	}
+
+	// An invalid monitor is skipped and keeps its last good settings; the
+	// valid ones are applied; a new invalid one isn't created.
+	edited := `
+healthchecks:
+  - name: API
+    type: http
+    target: https://api.example.com/health
+    interval: 5s
+  - name: Postgres
+    type: tcp
+    target: postgres.railway.internal:5433
+  - name: New but broken
+    type: icmp
+    target: x
+heartbeats:
+  - name: Nightly backup
+    cron: "0 3 * * *"
+    timezone: Europe/Berlin
+    grace: 30m
+`
+	res, err = Apply(ctx, st, []byte(edited))
+	if err != nil || res.Held || len(res.Problems) != 2 || res.Created != 0 || res.Updated != 1 || res.Deleted != 1 {
+		t.Fatalf("invalid monitors: %+v %v", res, err)
+	}
+	if got := find(t, st, "API"); got.Check.IntervalSeconds != api.Check.IntervalSeconds || !got.UpdatedAt.Equal(api.UpdatedAt) {
+		t.Fatalf("the invalid monitor changed: %+v", got.Check)
+	}
+	if got := find(t, st, "Postgres"); got.Check.Target != "postgres.railway.internal:5433" {
+		t.Fatalf("a valid monitor wasn't applied: %+v", got.Check)
+	}
+	all, _ := st.ListMonitors(ctx)
+	if len(all) != 3 { // API, Postgres, Nightly backup; Queue worker deleted
+		t.Fatalf("expected 3 monitors, got %d", len(all))
+	}
+}
+
+// A database target whose variable is set to something that isn't a URL
+// doesn't reject the file: that check fails when it runs.
+func TestApplyInvalidVariable(t *testing.T) {
+	t.Setenv("FILESYNC_TEST_PG_URL", "not a url")
+	ds, err := Parse([]byte("healthchecks:\n  - {name: DB, type: postgres, target: \"${FILESYNC_TEST_PG_URL}\"}\n"))
+	if err != nil || len(ds) != 1 {
+		t.Fatalf("got %v, %v", ds, err)
+	}
+}

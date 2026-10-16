@@ -1,5 +1,5 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -s -w -X main.version=$(VERSION)
+LDFLAGS := -s -w -X github.com/uptimy/agent/internal/version.Version=$(VERSION)
 BIN := bin/uptimy-agent
 
 .PHONY: run build web go dev-api dev-web test lint docker clean

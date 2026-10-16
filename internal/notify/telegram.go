@@ -9,10 +9,11 @@ import (
 
 func init() {
 	Register(Channel{
-		Type:  "telegram",
-		Label: "Telegram",
-		Help:  "Create a bot with @BotFather, then add it to your chat.",
-		Order: 30,
+		Type:      "telegram",
+		Reminders: true,
+		Label:     "Telegram",
+		Help:      "Create a bot with @BotFather, then add it to your chat.",
+		Order:     30,
 		Fields: []schema.Field{
 			{Key: "bot_token", Label: "Bot token", Input: schema.Password, Required: true},
 			{Key: "chat_id", Label: "Chat ID", Input: schema.Text, Required: true},

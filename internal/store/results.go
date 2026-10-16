@@ -12,14 +12,14 @@ import (
 // InsertResult records a healthcheck result.
 func (s *Store) InsertResult(ctx context.Context, r monitor.Result) error {
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO results (monitor_id, ts, ok, latency_ms, message) VALUES (?, ?, ?, ?, ?)",
-		r.MonitorID, r.Time.UnixMilli(), r.OK, r.LatencyMS, r.Message)
+		"INSERT INTO results (monitor_id, ts, ok, latency_ms, message, status_code, error_class) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		r.MonitorID, r.Time.UnixMilli(), r.OK, r.LatencyMS, r.Message, r.StatusCode, r.ErrorClass)
 	return err
 }
 
 // RecentResults returns the newest limit results, oldest first.
 func (s *Store) RecentResults(ctx context.Context, monitorID int64, limit int) ([]monitor.Result, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT monitor_id, ts, ok, latency_ms, message FROM (
+	rows, err := s.db.QueryContext(ctx, `SELECT monitor_id, ts, ok, latency_ms, message, status_code, error_class FROM (
 		SELECT * FROM results WHERE monitor_id = ? ORDER BY ts DESC LIMIT ?
 	) ORDER BY ts`, monitorID, limit)
 	if err != nil {
@@ -31,7 +31,7 @@ func (s *Store) RecentResults(ctx context.Context, monitorID int64, limit int) (
 // ResultsSince returns results newer than since, oldest first.
 func (s *Store) ResultsSince(ctx context.Context, monitorID int64, since time.Time) ([]monitor.Result, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT monitor_id, ts, ok, latency_ms, message FROM results WHERE monitor_id = ? AND ts >= ? ORDER BY ts",
+		"SELECT monitor_id, ts, ok, latency_ms, message, status_code, error_class FROM results WHERE monitor_id = ? AND ts >= ? ORDER BY ts",
 		monitorID, since.UnixMilli())
 	if err != nil {
 		return nil, err
@@ -45,7 +45,7 @@ func scanResults(rows *sql.Rows) ([]monitor.Result, error) {
 	for rows.Next() {
 		var r monitor.Result
 		var ts int64
-		if err := rows.Scan(&r.MonitorID, &ts, &r.OK, &r.LatencyMS, &r.Message); err != nil {
+		if err := rows.Scan(&r.MonitorID, &ts, &r.OK, &r.LatencyMS, &r.Message, &r.StatusCode, &r.ErrorClass); err != nil {
 			return nil, err
 		}
 		r.Time = fromMillis(ts)
@@ -119,13 +119,33 @@ func (s *Store) daily(ctx context.Context, days int, query string, monitorID int
 
 // InsertEvent records a status transition.
 func (s *Store) InsertEvent(ctx context.Context, e monitor.Event) (monitor.Event, error) {
-	res, err := s.db.ExecContext(ctx, "INSERT INTO events (monitor_id, ts, status, message) VALUES (?, ?, ?, ?)",
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		e.ID, err = insertEvent(ctx, tx, e)
+		return err
+	})
+	return e, err
+}
+
+// insertEvent records a status transition. Acknowledgements and reminders
+// are about one outage, so any change ends them: a reminder still waiting
+// to go out would now be wrong.
+func insertEvent(ctx context.Context, tx *sql.Tx, e monitor.Event) (int64, error) {
+	res, err := tx.ExecContext(ctx, "INSERT INTO events (monitor_id, ts, status, message) VALUES (?, ?, ?, ?)",
 		e.MonitorID, e.Time.UnixMilli(), e.Status, e.Message)
 	if err != nil {
-		return e, err
+		return 0, err
 	}
-	e.ID, err = res.LastInsertId()
-	return e, err
+	if _, err := tx.ExecContext(ctx, "DELETE FROM acknowledgements WHERE monitor_id = ?", e.MonitorID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE alert_deliveries SET state = 'suppressed', detail = ?, done_at = ?
+		WHERE state = 'pending' AND alert_id IN
+			(SELECT id FROM alerts WHERE monitor_id = ? AND type IN ('reminder', 'acknowledged'))`,
+		"its status changed first", e.Time.UnixMilli(), e.MonitorID); err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
 // ListEvents returns the newest events, newest first. monitorID 0 means all monitors.

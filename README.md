@@ -27,7 +27,7 @@ Because it runs next to your services, it can check things that external monitor
 - **Healthchecks:** HTTP(S) with status and keyword assertions, Postgres, MySQL and Redis (real logins and queries, not just an open port), ping, TCP, DNS, TLS expiry and Kubernetes workloads
 - **Heartbeats:** cron jobs, backups and workers ping a URL when they run, or, for a Kubernetes CronJob, nothing at all: the agent reads its Jobs. Schedules are an interval or a cron expression in any time zone; you see on-time rate, missed and failed runs, exit codes and how long each run took, and you're alerted when a run is missed or fails
 - **Dashboard:** both at a glance, split into Healthchecks and Heartbeats like in Uptimy
-- **Alerts:** email, Slack, Microsoft Teams, Discord, Telegram, ntfy, PagerDuty, webhooks, Uptimy (alerts become incidents there, which can run workflows), and 30+ more services through one [Shoutrrr](https://shoutrrr.nickfedor.com/latest/services/overview/) URL (Pushover, Gotify, Matrix, Google Chat, Mattermost, Opsgenie, Signal, ...), fired on down and on recovery, with a consecutive-failure threshold to avoid flapping. Each channel alerts for every monitor or only the ones you choose
+- **Alerts:** email, Slack, Microsoft Teams, Discord, Telegram, ntfy, PagerDuty, webhooks, and 30+ more services through one [Shoutrrr](https://shoutrrr.nickfedor.com/latest/services/overview/) URL (Pushover, Gotify, Matrix, Google Chat, Mattermost, Opsgenie, Signal, ...), fired on down and on recovery, with failure and recovery thresholds against flapping. Alerts are retried until the channel takes them, so a Slack hiccup or a restart doesn't lose one, and each event shows whether it reached every channel. Reminders while a monitor stays down until someone acknowledges it. Each channel alerts for every monitor or only the ones you choose
 - **Maintenance windows:** planned work doesn't page anyone, and is announced on the status page. A monitor that's still down when the window ends alerts then
 - **Status page:** public, at `/status` or on its own domain (`status.example.com`), which serves only the status page so sign-in and the dashboard stay private. Admins set a logo (with an optional dark-mode version), accent color and website link, create sections and drag monitors into order with public names, with a live preview, much like the Uptimy app. New monitors stay off the page until you add them. It shows names with uptime (healthchecks) or on-time runs (heartbeats) only, never internal hostnames
 - **Incidents and an announcement:** tell visitors what's going on with an incident (severity, affected monitors, and a timeline from investigating to resolved), posted under **Incidents**, or with the status page's announcement for news like a migration
@@ -120,6 +120,8 @@ Annotations adjust what's checked:
 | `upti.my/grace` | CronJob | the Job's `activeDeadlineSeconds` plus a minute, or else the time between runs, at most `1h` |
 | `upti.my/expected-status` | HTTP checks | `200-399` |
 | `upti.my/keyword` | HTTP checks | – |
+| `upti.my/failure-threshold` | all but CronJobs | `2` failed checks in a row before it's down (1–10) |
+| `upti.my/recovery-threshold` | all but CronJobs | `1` good check in a row before it's up again (1–10) |
 
 **CronJobs need no ping.** The agent reads each discovered CronJob's Jobs every 10 seconds and records every run at the times Kubernetes saw: when the Job started, when it completed or failed, and for a failure the reason with the container's exit code (`BackoffLimitExceeded; container backup exited with code 137 (OOMKilled)`). Missed runs come from the schedule as for any heartbeat. A run must finish within the grace period after it's due, so the default grace leaves room for the job itself. Suspending the CronJob pauses its heartbeat, and resuming it resumes it.
 
@@ -146,13 +148,24 @@ Environment variables set how the agent runs, its secrets, and (optionally) moni
 | `MONITORS_FILE` | – | Path to a YAML file of monitors |
 | `MONITORS_YAML` | – | The YAML itself, for platforms where mounting files is awkward |
 | `KUBERNETES_DISCOVERY` | `true` | Create monitors for resources labeled `upti.my/monitor: "true"` (see [Auto-discovery](#auto-discovery)). Only applies inside a cluster |
-| `RETENTION_DAYS` | `30` | How long check results, heartbeat runs and events are kept |
-| `UPTIMY_HEARTBEAT_URL` | – | Optional. Pins the [Watch the watcher](#watch-the-watcher) heartbeat, for agents without a persistent volume; otherwise connect it in the UI |
+| `RETENTION_DAYS` | `30` | How long check results, heartbeat runs, events and alerts are kept. A monitor's current status is kept however old |
+| `TRUSTED_PROXIES` | `private` | Proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed: who signed in (for the sign-in rate limit) and whether they used HTTPS (for Secure cookies). Comma-separated addresses and ranges (`10.0.0.0/8, 192.0.2.1`), `private` for loopback and private networks (where an Ingress, Railway's edge or a local proxy connects from), or `none` |
 | `AGENT_NAME` | hostname | How this agent is labeled in Uptimy |
 
 ### Monitors in YAML
 
 The file has two lists, `healthchecks` and `heartbeats`; see [`examples/monitors.yaml`](examples/monitors.yaml) for every check type and both kinds of schedule. Monitors from YAML are matched by name: changing one keeps its history, and removing one deletes it on the next start. They're shown read-only in the UI, though you can still pause them during maintenance and add them to the status page. Monitors created in the UI are never touched by the file. Unknown settings are an error, so a typo doesn't go unnoticed.
+
+A file with mistakes doesn't stop the agent. If it doesn't parse (a YAML syntax error, an unknown setting) or two monitors share a name, none of it is applied and the monitors stay as the last good file left them. If only some monitors are invalid, the rest are applied; an invalid one keeps its last good settings, or isn't created if it's new. Either way the error is logged and shown on the dashboard and the monitor lists until a restart with a fixed file. A database target whose `${VAR}` is unset or isn't a valid URL is applied too; only its checks fail, saying which variable is wrong.
+
+Check a file before it ships, in CI or a pre-commit hook, without starting the agent:
+
+```sh
+uptimy-agent validate monitors.yaml           # or - for stdin; with no file, MONITORS_FILE / MONITORS_YAML
+docker run --rm -v "$PWD:/w" ghcr.io/uptimy/agent validate /w/monitors.yaml
+```
+
+It reports every problem with its monitor and exits 1 if there are any. A `${VAR}` a database target uses that isn't set, or doesn't make a valid URL, is a warning, since CI rarely has the secrets; `--strict-env` makes it an error. `--format json` prints a report for tools.
 
 ### Users and roles
 
@@ -208,6 +221,10 @@ GET and POST both work. A POST body (say, the end of the job's log) is kept with
 - **History:** each run is kept with its result, how long it took and its message; the heartbeat's page shows the on-time rate over 24 hours, 7 days and 30 days.
 - **Ping URLs** are generated and stay the same when you edit the heartbeat. Replace one from its page if it leaks. In YAML, set `token` to pin it (16 to 64 letters, digits, `-` or `_`); otherwise one is generated and kept.
 
+### User-Agent
+
+The agent identifies itself as `uptimy-agent/<version>` (e.g. `uptimy-agent/0.2.0`) on its checks, alert webhooks and calls to Uptimy. To let it through a firewall or WAF, allow that; a monitor's own `User-Agent` header replaces it. It's deliberately unlike Uptimy Cloud's checkers (`upti.my-healthcheck/1.0`), so blocking agents someone else runs never blocks Cloud checks.
+
 ### Ping
 
 Ping monitors send three ICMP echo requests and are up if any reply comes back. The agent uses unprivileged ICMP sockets, so it needs no root or `NET_RAW`: Docker allows them by default, and the Helm chart sets the `net.ipv4.ping_group_range` sysctl. Elsewhere on Linux, run `sysctl -w net.ipv4.ping_group_range="0 2147483647"`.
@@ -216,13 +233,43 @@ Ping monitors send three ICMP echo requests and are up if any reply comes back. 
 
 A channel alerts for every monitor (the default, including monitors added later) or only for the monitors you choose. Set it on the channel under **Notifications**, or tick channels under **Alerts** when editing a monitor.
 
+### Alert delivery
+
+Every alert is saved with the status change that caused it and then delivered to each channel on its own, so one failing channel never holds up or repeats the others:
+
+- A channel that's unreachable or answers with an error like 500 or 429 is retried after 10 seconds, 30 seconds, 1, 2 and then every 5 minutes (sooner or later if it sends `Retry-After`), for up to an hour. One that refuses the alert outright, like a deleted webhook (404) or a revoked token (401), isn't retried.
+- Alerts about a monitor reach a channel in order: a recovery never arrives before the outage it ends. If a channel never got any alert about an outage, it doesn't get the recovery either.
+- Alerts waiting to be sent survive restarts and crashes and go out when the agent is back. Delivery is at least once: an alert cut off after the channel took it is sent again. Each alert has an `id` that's the same on every attempt, so a webhook receiver can drop the copies.
+- Each event on a monitor's page shows how its alert went on every channel (sent, retrying, refused, given up, or not sent and why), with **Retry**. **Notifications** shows each channel's last alert and anything that failed in the last day. `/metrics` counts deliveries by result.
+
+**Thresholds:** a healthcheck goes down after `failure_threshold` failed checks in a row (2 by default) and comes back up after `recovery_threshold` good ones (1 by default). Raise the recovery threshold for a target that flaps, so it doesn't send down/up pairs.
+
+**Reminders and acknowledging:** set **Remind while down** on a channel (every 15 minutes to once a day) to be reminded while a monitor stays down, so a muted channel or a missed message doesn't leave an outage unnoticed. **Acknowledge** on a down monitor stops the reminders for that outage and tells the channels who's on it. Reminders pause during maintenance, and the next status change ends both. PagerDuty tracks outages itself, so it doesn't get reminders.
+
+The webhook channel posts the alert as JSON:
+
+```json
+{
+  "id": 42,
+  "monitor_id": 7,
+  "monitor_name": "Checkout API",
+  "kind": "healthcheck",
+  "target": "https://shop.example.com/health",
+  "status": "down",
+  "message": "unexpected status 503",
+  "time": "2026-10-09T20:49:22.334Z"
+}
+```
+
+Reminders and acknowledgements have `"status": "down"` and a `type` of `"reminder"` or `"acknowledged"`, with `down_since` and, for acknowledgements, `acknowledged_by`. Status changes have no `type`.
+
 ### More services
 
 For anything without its own channel, add a **More services (Shoutrrr)** channel with a [Shoutrrr URL](https://shoutrrr.nickfedor.com/latest/services/overview/): `pushover://shoutrrr:<token>@<user>`, `gotify://<host>/<token>`, `matrix://<user>:<password>@<host>`, `googlechat://chat.googleapis.com/v1/spaces/...`, `opsgenie://api.opsgenie.com/<key>`, and 30+ more. The URL holds the service's credentials, so it's stored like a password and never shown in errors.
 
 ### Maintenance
 
-Schedule maintenance under **Maintenance** before deploys, upgrades or migrations: for all monitors or some, starting now or later. During the window the monitors keep being checked, but nobody is alerted. If one is still down when the window ends, its alert goes out then; if it recovered, nothing is sent. Public windows are announced on the status page up to a week ahead and stay listed as completed for a week after, and the affected monitors are marked as under maintenance rather than down.
+Schedule maintenance under **Maintenance** before deploys, upgrades or migrations: for all monitors or some, starting now or later. During the window the monitors keep being checked, but nobody is alerted. If one is still down when the window ends, its alert goes out then, even if the agent restarted in between; if it recovered, nothing is sent. Public windows are announced on the status page up to a week ahead and stay listed as completed for a week after, and the affected monitors are marked as under maintenance rather than down.
 
 ### Incidents
 
@@ -289,18 +336,23 @@ docker stop uptime-kuma && docker cp uptime-kuma:/app/data/kuma.db .
 
 You'll see what each monitor and notification becomes, and choose what to import. HTTP, keyword, TCP port, ping, DNS, TLS, Postgres, MySQL, Redis and push monitors carry over, with their intervals, retries, accepted status codes, headers and basic or bearer auth. So do email, Slack, Teams, Discord, Telegram, ntfy, PagerDuty and webhook notifications, plus Pushover, Gotify, Matrix, Mattermost, Google Chat, Rocket.Chat and Opsgenie as "More services (Shoutrrr)" channels, along with which monitors alert where. Monitors that were on a Kuma status page are added to yours, with Kuma's groups as sections, in Kuma's order. Push monitors become heartbeats with new ping URLs, so update your jobs. Anything that can't be carried over (Docker, gRPC, inverted checks, ...) is listed with the reason. Kuma installs that use MariaDB aren't supported yet.
 
-## Watch the watcher
+## Importing from Railway
 
-A self-hosted monitor has one blind spot: itself. If the agent, its node, or the whole cluster goes down, nothing is left to tell you.
+Under **Settings → Import from Railway**, paste a project token (Railway → Project → Settings → Tokens) to get a monitor for each service in its environment: an HTTP check for web services (over private networking when the agent runs in that project, otherwise at their public domain), a database check for Postgres, MySQL, MariaDB and Redis through a `${VAR}` you add to the agent, and a heartbeat for cron services. You review them first; the token is only used for that and isn't stored. Importing again skips services already imported.
 
-Open **Settings → Watch the watcher** and click **Connect to Uptimy**. Sign in to [Uptimy](https://www.upti.my/?utm_source=github&utm_medium=readme&utm_campaign=agent-heartbeat) (free), pick a workspace, and approve. The agent creates its own heartbeat and starts checking in every minute. If it stops, Uptimy alerts you from outside.
+## Uptimy Cloud
 
-- The agent receives an **agent-scoped key**, which can only manage this agent's own heartbeat, not the rest of your workspace. It stays on the agent's server and is revoked when you click Disconnect, which also deletes the heartbeat.
-- Reconnecting (say, after reinstalling) reuses the same heartbeat, so you keep its history and don't end up with orphaned heartbeats.
-- **When you're alerted:** by default after 5 minutes of silence, enough to ride out a restart or redeploy. Choose 2, 5, 15 or 30 minutes in the same card. The setting lives on the heartbeat in Uptimy, so a change made there (or with `uptimyctl heartbeats update`) shows up here too.
-- **Planned work:** **Allow downtime** for 30 minutes, 1 hour or 4 hours before working on the agent or its server. This doesn't pause the heartbeat: it pushes its alert deadline back, so the heartbeat stays active in Uptimy and still alerts if the agent isn't back when the window ends, and the agent restores normal alerting afterwards. **Pause until I resume** is there too, but nothing alerts until you resume.
-- Set `AGENT_NAME` to label the agent in Uptimy; the default is the hostname, which in Kubernetes is the pod name.
-- Prefer to set it up by hand? Choose **Or paste a heartbeat URL instead**, or set `UPTIMY_HEARTBEAT_URL`, which pins the connection read-only for GitOps setups.
+A self-hosted monitor has one blind spot: itself. If the agent, its node, or the whole cluster goes down, nothing is left to tell you. And a status page served by the agent goes down with it.
+
+Open **Settings → Uptimy Cloud** and click **Connect to Uptimy Cloud**. Sign in to [Uptimy](https://www.upti.my/?utm_source=github&utm_medium=readme&utm_campaign=agent-heartbeat) (free), pick a workspace, and approve. The agent adds itself to the workspace as a private location:
+
+- **Alerts from outside.** Every upload checks the agent in. If uploads stop, Uptimy alerts you, by default after two missed uploads. Choose a longer delay in the same card. The setting lives in Uptimy, so a change made there (or with `uptimyctl heartbeats update`) shows up here too.
+- **Your monitors in Cloud, read-only.** Every healthcheck and heartbeat shows up in Uptimy with its status, uptime and history, ready for status pages on your own domain, SLA reports, alert rules, workflows and on-call. They're managed here: change, pause or delete them in the agent and Cloud follows within seconds. They don't count toward your plan's monitor limits.
+- **The agent decides.** It keeps checking and alerting on its own, with its own thresholds; Cloud records the status it decided, so both always agree. While Uptimy can't be reached, results queue up and are uploaded when it's back (up to a day).
+- **What's sent:** monitor names, types, targets, intervals and results: status changes as they happen (at your plan's pace) and otherwise one result per monitor every 5 minutes, in a routine upload every minute (Free: 5 minutes). Passwords and secret query parameters (`password`, `token`, `api_key`, `signature`, ...) are masked in targets before anything is sent; `${VAR}` references stay references. Response bodies and request headers aren't sent.
+- The agent gets an **agent-scoped key**, which can only manage this agent's location, monitors and check-in, not the rest of your workspace. It stays on the agent's server. **Disconnect** removes the agent and its monitors from Uptimy and revokes the key; reports already made keep their numbers. Reconnecting (say, after reinstalling) reuses the same location and check-in as long as the agent's data volume is kept, since that's where its install id lives; a fresh volume counts as a new agent toward your plan's agent limit.
+- **Planned work:** **Allow downtime** for 30 minutes, 1 hour or 4 hours before working on the agent or its server. This pushes the alert deadline back instead of pausing, so Uptimy still alerts if the agent isn't back when the window ends. **Pause until I resume** is there too, but nothing alerts until you resume.
+- How many agents a workspace can connect depends on its plan. Set `AGENT_NAME` to label the agent in Uptimy; the default is the hostname, which in Kubernetes is the pod name.
 
 ## Development
 

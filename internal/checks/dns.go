@@ -59,14 +59,14 @@ func dns(ctx context.Context, m monitor.Check) Outcome {
 		}
 	}
 	if err != nil {
-		return Outcome{Message: trimErr(err)}
+		return Outcome{Message: trimErr(err), ErrorClass: classDNS} // the lookup is the check
 	}
 	if len(answers) == 0 {
-		return Outcome{Message: "no records returned"}
+		return Outcome{Message: "no records returned", ErrorClass: classAssertion}
 	}
 	joined := strings.Join(answers, ", ")
 	if m.Config.Expected != "" && !strings.Contains(joined, m.Config.Expected) {
-		return Outcome{Message: fmt.Sprintf("expected %q, got %s", m.Config.Expected, joined)}
+		return Outcome{Message: fmt.Sprintf("expected %q, got %s", m.Config.Expected, joined), ErrorClass: classAssertion}
 	}
 	return Outcome{OK: true, Message: joined}
 }

@@ -14,25 +14,22 @@ import (
 	"net/url"
 	"strings"
 	"time"
-)
 
-// Default Uptimy endpoints. Overridable for development and self-hosted setups.
-const (
-	DefaultAppURL        = "https://app.upti.my"
-	DefaultAPIURL        = "https://api.upti.my"
-	DefaultHeartbeatsURL = "https://heartbeats.upti.my"
+	"github.com/uptimy/agent/internal/version"
 )
 
 // ErrKeyRejected means Uptimy didn't accept the agent key (revoked, expired,
 // or never valid).
 var ErrKeyRejected = errors.New("Uptimy rejected the agent key")
 
-// Client talks to Uptimy with an agent-scoped API key: just enough to check
-// the key, manage the agent's own heartbeat, and revoke the key again.
+// Client talks to Uptimy with an agent-scoped API key: the agent's location,
+// its mirrored monitors and check-in (cloud.go), and revoking the key.
 type Client struct {
 	APIURL        string
 	HeartbeatsURL string
-	HTTP          *http.Client
+	// IngestURL receives the sync's uploads (DefaultIngestURL).
+	IngestURL string
+	HTTP      *http.Client
 }
 
 // NewClient returns a client for the given base URLs.
@@ -40,6 +37,7 @@ func NewClient(apiURL, heartbeatsURL string) *Client {
 	return &Client{
 		APIURL:        strings.TrimRight(apiURL, "/"),
 		HeartbeatsURL: strings.TrimRight(heartbeatsURL, "/"),
+		IngestURL:     DefaultIngestURL,
 		HTTP:          &http.Client{Timeout: 15 * time.Second},
 	}
 }
@@ -84,7 +82,7 @@ func (c *Client) ExchangeCode(ctx context.Context, code, verifier, redirectURI s
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "uptimy-agent")
+	req.Header.Set("User-Agent", version.UserAgent())
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		var ue *url.Error
@@ -120,17 +118,6 @@ func (c *Client) WhoAmI(ctx context.Context, key string) (KeyInfo, error) {
 	return out.Data, err
 }
 
-// Heartbeat is the agent's heartbeat monitor in Uptimy.
-type Heartbeat struct {
-	UUID     string
-	PingURL  string
-	Existing bool // true when an earlier connection's heartbeat was reclaimed
-}
-
-// CheckInInterval is how often the agent checks in with Uptimy. When Uptimy
-// alerts is set separately, as the heartbeat's grace (see GraceFor).
-const CheckInInterval = time.Minute
-
 // Connection is an account connection made through "Connect to Uptimy". The
 // agent key never leaves the agent's server.
 type Connection struct {
@@ -143,55 +130,26 @@ type Connection struct {
 
 	// Paused mirrors the heartbeat's paused state in Uptimy.
 	Paused bool `json:"paused,omitempty"`
+
+	// Cloud sync (internal/cloudsync): the agent's private location, how
+	// often it uploads, how soon a status change may follow the last upload
+	// (the plan's check interval), and how often an unchanged result is sent.
+	// Empty LocationUUID means the sync hasn't set the connection up yet,
+	// e.g. one made before 0.2.0.
+	LocationUUID                string `json:"location_uuid,omitempty"`
+	UploadIntervalSeconds       int    `json:"upload_interval_seconds,omitempty"`
+	StatusChangeIntervalSeconds int    `json:"status_change_interval_seconds,omitempty"`
+	SampleIntervalSeconds       int    `json:"sample_interval_seconds,omitempty"`
 	// During a maintenance window: when it ends, and the grace to restore.
 	MaintenanceUntil   *time.Time `json:"maintenance_until,omitempty"`
 	NormalGraceSeconds int        `json:"normal_grace_seconds,omitempty"`
 }
 
-// DefaultAlertAfter is how long the agent may be silent before Uptimy alerts,
-// for a new connection. Long enough to ride out a normal restart or redeploy
-// (image pull, Railway rebuild, Helm upgrade) without paging anyone.
-const DefaultAlertAfter = 5 * time.Minute
-
 // GraceFor returns the heartbeat grace that makes Uptimy alert after alertAfter
-// of silence (Uptimy alerts once CheckInInterval + grace pass without a
-// check-in).
-func GraceFor(alertAfter time.Duration) int {
-	return max(0, int((alertAfter - CheckInInterval).Seconds()))
-}
-
-// EnsureHeartbeat creates the agent's heartbeat, or reclaims the one it made
-// before: clientRef (a stable install ID) makes this idempotent on Uptimy's
-// side, so reconnecting never leaves an orphaned heartbeat behind. A
-// reclaimed heartbeat keeps its settings, including any changed in Uptimy.
-func (c *Client) EnsureHeartbeat(ctx context.Context, key, name, clientRef string) (Heartbeat, error) {
-	body := map[string]any{
-		"name":            name,
-		"description":     "Created by Uptimy Agent. Alerts when the agent stops checking in.",
-		"intervalSeconds": int(CheckInInterval.Seconds()),
-		"graceSeconds":    GraceFor(DefaultAlertAfter),
-		"clientRef":       clientRef,
-	}
-	var out struct {
-		Data struct {
-			UUID       string `json:"uuid"`
-			Credential struct {
-				PublicID string `json:"publicId"`
-			} `json:"credential"`
-		} `json:"data"`
-	}
-	status, err := c.doStatus(ctx, key, http.MethodPost, c.HeartbeatsURL+"/v1/api/heartbeat-monitors/", body, &out)
-	if err != nil {
-		return Heartbeat{}, err
-	}
-	if out.Data.UUID == "" || out.Data.Credential.PublicID == "" {
-		return Heartbeat{}, errors.New("Uptimy didn't return the heartbeat's check-in URL")
-	}
-	return Heartbeat{
-		UUID:     out.Data.UUID,
-		PingURL:  c.HeartbeatsURL + "/v1/monitors/" + url.PathEscape(out.Data.Credential.PublicID),
-		Existing: status == http.StatusOK,
-	}, nil
+// of silence from an agent checking in every interval (Uptimy alerts once
+// interval + grace pass without a check-in).
+func GraceFor(alertAfter, interval time.Duration) int {
+	return max(0, int((alertAfter - interval).Seconds()))
 }
 
 // HeartbeatSettings are the parts of the agent's heartbeat that decide when
@@ -298,27 +256,46 @@ func (c *Client) RevokeKey(ctx context.Context, key string) error {
 
 var errNotFound = errors.New("not found")
 
+// ErrNotFound is a 404 from Uptimy.
+var ErrNotFound = errNotFound
+
+// ErrUnreachable wraps network errors: Uptimy couldn't be asked at all.
+var ErrUnreachable = errors.New("couldn't reach Uptimy")
+
 func (c *Client) do(ctx context.Context, key, method, endpoint string, body, out any) error {
 	_, err := c.doStatus(ctx, key, method, endpoint, body, out)
 	return err
 }
 
 func (c *Client) doStatus(ctx context.Context, key, method, endpoint string, body, out any) (int, error) {
+	r, err := c.doFull(ctx, key, method, endpoint, body, out)
+	return r.status, err
+}
+
+// response is what the sync needs from an answer besides its body.
+type response struct {
+	status     int
+	code       string // the error envelope's code, e.g. "PLAN_LIMIT.403"
+	message    string // and its error
+	retryAfter time.Duration
+}
+
+func (c *Client) doFull(ctx context.Context, key, method, endpoint string, body, out any) (response, error) {
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return 0, err
+			return response{}, err
 		}
 		reader = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
-		return 0, err
+		return response{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "uptimy-agent")
+	req.Header.Set("User-Agent", version.UserAgent())
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -328,29 +305,35 @@ func (c *Client) doStatus(ctx context.Context, key, method, endpoint string, bod
 		if errors.As(err, &ue) {
 			err = ue.Err // don't echo URLs into user-facing errors
 		}
-		return 0, fmt.Errorf("couldn't reach Uptimy: %w", err)
+		return response{}, fmt.Errorf("%w: %w", ErrUnreachable, err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	r := response{status: resp.StatusCode, retryAfter: parseRetryAfter(resp.Header.Get("Retry-After"))}
 
-	switch {
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return resp.StatusCode, ErrKeyRejected
-	case resp.StatusCode == http.StatusNotFound:
-		return resp.StatusCode, errNotFound
-	case resp.StatusCode >= 300:
+	if resp.StatusCode >= 300 {
 		var e struct {
+			Code  string `json:"code"`
 			Error string `json:"error"`
 		}
-		if json.Unmarshal(raw, &e) == nil && e.Error != "" {
-			return resp.StatusCode, fmt.Errorf("Uptimy: %s", e.Error)
+		_ = json.Unmarshal(raw, &e)
+		r.code, r.message = e.Code, e.Error
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized:
+			return r, ErrKeyRejected
+		case resp.StatusCode == http.StatusForbidden && e.Code != "AGENT_LIMIT.403" && e.Code != "PLAN_LIMIT.403":
+			return r, ErrKeyRejected
+		case resp.StatusCode == http.StatusNotFound:
+			return r, errNotFound
+		case e.Error != "":
+			return r, fmt.Errorf("Uptimy: %s", e.Error)
 		}
-		return resp.StatusCode, fmt.Errorf("Uptimy returned HTTP %d", resp.StatusCode)
+		return r, fmt.Errorf("Uptimy returned HTTP %d", resp.StatusCode)
 	}
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {
-			return resp.StatusCode, fmt.Errorf("unexpected response from Uptimy: %w", err)
+			return r, fmt.Errorf("unexpected response from Uptimy: %w", err)
 		}
 	}
-	return resp.StatusCode, nil
+	return r, nil
 }

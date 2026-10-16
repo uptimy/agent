@@ -8,8 +8,9 @@ import (
 
 func init() {
 	Register(Channel{
-		Type:  "teams",
-		Label: "Microsoft Teams",
+		Type:      "teams",
+		Reminders: true,
+		Label:     "Microsoft Teams",
 		Help: "In Teams, add the \"Post to a channel when a webhook request is received\" workflow to a channel " +
 			"and paste its URL. Older incoming webhook URLs work too.",
 		Order:    25,
@@ -25,8 +26,11 @@ func init() {
 // and incoming webhooks accept.
 func teamsCard(a Alert) map[string]any {
 	color := "Attention"
-	if a.Status == "up" {
+	switch {
+	case a.Status == "up":
 		color = "Good"
+	case a.Type == AlertAcknowledged:
+		color = "Accent"
 	}
 	facts := []map[string]string{}
 	add := func(title, value string) {

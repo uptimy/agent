@@ -64,3 +64,16 @@ func TestMetrics(t *testing.T) {
 		t.Error("metrics must not expose targets")
 	}
 }
+
+func getMetrics(t *testing.T, c *client) string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, c.base+"/metrics", nil)
+	c.authorize(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return string(b)
+}

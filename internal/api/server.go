@@ -11,10 +11,12 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/uptimy/agent/internal/cloudsync"
 	"github.com/uptimy/agent/internal/config"
-	"github.com/uptimy/agent/internal/connect"
+	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/discovery"
 	"github.com/uptimy/agent/internal/events"
+	"github.com/uptimy/agent/internal/filesync"
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/notify"
 	"github.com/uptimy/agent/internal/scheduler"
@@ -23,17 +25,25 @@ import (
 
 // Server holds the API's dependencies.
 type Server struct {
-	Config        config.Config
-	Version       string
-	Store         *store.Store
-	Scheduler     *scheduler.Scheduler
-	Sender        *notify.Sender
-	Hub           *events.Hub
-	Log           *slog.Logger
-	Watchdog      *connect.Watchdog
+	Config    config.Config
+	Version   string
+	Store     *store.Store
+	Scheduler *scheduler.Scheduler
+	Sender    *notify.Sender
+	Alerts    *delivery.Dispatcher
+	Hub       *events.Hub
+	Log       *slog.Logger
+	// Sync is the Uptimy Cloud sync for "Connect to Uptimy Cloud".
+	Sync          *cloudsync.Syncer
 	KubeAvailable bool
 	// Discovery is nil unless Kubernetes discovery runs.
 	Discovery *discovery.Discoverer
+	// MonitorsFileProblem is what was wrong with the monitors file at
+	// startup, or nil.
+	MonitorsFileProblem *filesync.Problem
+	// RailwayURL is Railway's API for importing from Railway; empty is
+	// railway.APIURL.
+	RailwayURL string
 
 	limiter *loginLimiter
 	connect connectFlows
@@ -88,6 +98,7 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	auth("PUT /api/healthchecks/{id}", s.updateHealthcheck)
 	auth("DELETE /api/healthchecks/{id}", s.deleteMonitor(monitor.KindHealthcheck))
 	auth("POST /api/healthchecks/{id}/pause", s.pauseMonitor(monitor.KindHealthcheck))
+	auth("POST /api/healthchecks/{id}/acknowledge", s.acknowledgeMonitor(monitor.KindHealthcheck))
 	auth("POST /api/healthchecks/{id}/check", s.checkNow)
 	auth("GET /api/healthchecks/{id}/results", s.healthcheckResults)
 
@@ -98,6 +109,7 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	auth("PUT /api/heartbeats/{id}", s.updateHeartbeat)
 	auth("DELETE /api/heartbeats/{id}", s.deleteMonitor(monitor.KindHeartbeat))
 	auth("POST /api/heartbeats/{id}/pause", s.pauseMonitor(monitor.KindHeartbeat))
+	auth("POST /api/heartbeats/{id}/acknowledge", s.acknowledgeMonitor(monitor.KindHeartbeat))
 	auth("POST /api/heartbeats/{id}/token", s.rotateToken)
 	auth("GET /api/heartbeats/{id}/runs", s.heartbeatRuns)
 
@@ -116,12 +128,12 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	auth("DELETE /api/incidents/{id}/updates/{update}", s.deleteIncidentUpdate)
 
 	auth("GET /api/monitors/{id}/events", s.monitorEvents)
+	auth("POST /api/alerts/{alert}/deliveries/{notifier}/retry", s.retryDelivery)
 	auth("GET /api/activity", s.activity)
 
-	auth("GET /api/uptimy/heartbeat", s.heartbeatStatus)
-	auth("PUT /api/uptimy/heartbeat", s.connectHeartbeat)
-	auth("DELETE /api/uptimy/heartbeat", s.disconnectHeartbeat)
-	auth("POST /api/uptimy/heartbeat/test", s.testHeartbeat)
+	auth("GET /api/uptimy", s.uptimyStatus)
+	auth("DELETE /api/uptimy", s.disconnectUptimy)
+	auth("POST /api/uptimy/upload", s.uploadNow)
 	auth("GET /api/uptimy/heartbeat/settings", s.getHeartbeatSettings)
 	auth("PUT /api/uptimy/heartbeat/settings", s.updateHeartbeatSettings)
 	auth("POST /api/uptimy/heartbeat/maintenance", s.startUptimyMaintenance)
@@ -147,6 +159,8 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	// The plan includes the channels' secrets (webhook URLs, keys).
 	admin("POST /api/import/kuma", s.planKumaImport)
 	admin("POST /api/import/kuma/apply", s.applyKumaImport)
+	admin("POST /api/import/railway", s.planRailwayImport)
+	admin("POST /api/import/railway/apply", s.applyRailwayImport)
 
 	auth("GET /api/notifiers", s.listNotifiers)
 	auth("POST /api/notifiers", s.createNotifier)
@@ -241,14 +255,20 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	conn, err := s.Store.UptimyConnection(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":             s.Version,
 		"kubernetes":          s.KubeAvailable,
 		"discovery":           s.Discovery != nil,
-		"uptimy_heartbeat":    s.Watchdog.Status().Enabled,
+		"uptimy_connected":    conn != nil,
 		"status_page_enabled": sp.Enabled,
 		"status_page_title":   sp.Title,
 		"monitors_file":       s.Config.MonitorsFile != "" || s.Config.MonitorsYAML != "",
+		"monitors_file_error": s.MonitorsFileProblem,
 		"retention_days":      s.Config.RetentionDays,
 	})
 }

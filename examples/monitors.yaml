@@ -15,7 +15,8 @@ healthchecks:
     type: http
     target: https://api.example.com/health
     interval: 30s
-    failure_threshold: 3
+    failure_threshold: 3              # down after 3 failed checks in a row (default 2)
+    recovery_threshold: 2             # up again after 2 good ones (default 1)
     config:
       expected_status: "200"
       keyword: '"status":"ok"'

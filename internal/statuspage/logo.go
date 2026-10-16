@@ -20,9 +20,6 @@ const (
 	Dark  Variant = "dark"
 )
 
-// Variants are the logos a page can have.
-var Variants = []Variant{Light, Dark}
-
 // ParseVariant checks a variant from a URL.
 func ParseVariant(s string) (Variant, bool) {
 	v := Variant(s)

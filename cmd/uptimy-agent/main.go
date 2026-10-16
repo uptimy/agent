@@ -10,14 +10,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata" // heartbeat cron schedules need time zones, and minimal images lack the database
 
 	"github.com/uptimy/agent/internal/api"
 	"github.com/uptimy/agent/internal/checks"
+	"github.com/uptimy/agent/internal/cloudsync"
 	"github.com/uptimy/agent/internal/config"
 	"github.com/uptimy/agent/internal/connect"
+	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/discovery"
 	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/filesync"
@@ -26,22 +30,23 @@ import (
 	"github.com/uptimy/agent/internal/notify"
 	"github.com/uptimy/agent/internal/scheduler"
 	"github.com/uptimy/agent/internal/store"
+	"github.com/uptimy/agent/internal/version"
 	"github.com/uptimy/agent/web"
 )
-
-// version is set at build time with -ldflags "-X main.version=...".
-var version = "dev"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "version", "--version":
-			fmt.Println(version)
+			fmt.Println(version.Version)
 			return
 		case "healthcheck":
 			// For Docker HEALTHCHECK: the distroless image has no curl.
 			os.Exit(healthcheck())
+		case "validate":
+			// Check a monitors file in CI, without starting the agent.
+			os.Exit(validate(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		case "reset-2fa":
 			// For a user, the only admin included, who lost both their
 			// phone and their recovery codes.
@@ -67,6 +72,9 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer st.Close()
+	for _, n := range upgradeNotices(st.Removed, os.Getenv("UPTIMY_HEARTBEAT_URL")) {
+		log.Warn(n)
+	}
 
 	generated, err := api.EnsureDefaultAdmin(ctx, st, cfg.AdminUsername, cfg.AdminPassword)
 	if err != nil {
@@ -77,7 +85,8 @@ func run(log *slog.Logger) error {
 		log.Warn("created the default admin user; sign in and choose a new password",
 			"username", cfg.AdminUsername, "password", generated)
 	}
-	if err := syncMonitorsFile(ctx, cfg, st, log); err != nil {
+	monitorsFileProblem, err := syncMonitorsFile(ctx, cfg, st, log)
+	if err != nil {
 		return err
 	}
 
@@ -87,7 +96,15 @@ func run(log *slog.Logger) error {
 	}
 	hub := events.NewHub()
 	sender := notify.NewSender(log)
-	sched := scheduler.New(st, checks.New(kc), sender, hub, log)
+	alerts := delivery.New(st, sender, hub, log)
+	// Alerts outlive the scheduler (stopped before returning), so the last
+	// status changes still go out; whatever doesn't make it stays in the
+	// outbox for the next start.
+	alertsCtx, stopAlerts := context.WithCancel(context.WithoutCancel(ctx))
+	alertsDone := make(chan struct{})
+	go func() { alerts.Run(alertsCtx, 5*time.Second); close(alertsDone) }()
+	defer func() { stopAlerts(); <-alertsDone }()
+	sched := scheduler.New(st, checks.New(kc), alerts, hub, log)
 	if err := sched.Start(ctx); err != nil {
 		return fmt.Errorf("start scheduler: %w", err)
 	}
@@ -106,26 +123,23 @@ func run(log *slog.Logger) error {
 		}, sched.Report)
 	}
 
-	// Watch the watcher: UPTIMY_HEARTBEAT_URL wins; otherwise use the URL
-	// connected from Settings in the UI, which can change at runtime.
-	heartbeatURL := cfg.UptimyHeartbeatURL
-	if heartbeatURL == "" {
-		if heartbeatURL, err = st.HeartbeatURL(ctx); err != nil {
-			return fmt.Errorf("load heartbeat setting: %w", err)
-		}
-	}
-	watchdog := connect.NewWatchdog(heartbeatURL, cfg.UptimyHeartbeatURL != "", connect.CheckInInterval, version, sched.Counts, log)
-	if heartbeatURL != "" {
-		log.Info("uptimy heartbeat enabled", "interval", connect.CheckInInterval)
-	}
 	go prune(ctx, st, cfg.RetentionDays, log)
 
+	// Uptimy Cloud sync, for a "Connect to Uptimy Cloud" connection: its
+	// uploads are also the agent's check-in.
+	syncer := cloudsync.New(st, func() *connect.Client {
+		c := connect.NewClient(cfg.UptimyAPIURL, cfg.UptimyHeartbeatsURL)
+		c.IngestURL = strings.TrimRight(cfg.UptimyIngestURL, "/")
+		return c
+	}, cfg.AgentName, version.Version, log)
+	go syncer.Run(ctx)
+	go syncer.Watch(ctx, hub.Subscribe)
+
 	srv := &api.Server{
-		Config: cfg, Version: version, Store: st, Scheduler: sched,
-		Sender: sender, Hub: hub, Log: log, Watchdog: watchdog, KubeAvailable: kc != nil, Discovery: disc,
+		Config: cfg, Version: version.Version, Store: st, Scheduler: sched,
+		Sender: sender, Alerts: alerts, Hub: hub, Log: log, KubeAvailable: kc != nil, Discovery: disc,
+		Sync: syncer, MonitorsFileProblem: monitorsFileProblem,
 	}
-	srv.RestorePaused(ctx)
-	go watchdog.Run(ctx)
 	go srv.RunUptimyMaintenance(ctx)
 	ui, err := web.Handler(cfg.UIDevServer)
 	if err != nil {
@@ -143,7 +157,7 @@ func run(log *slog.Logger) error {
 	httpServer.RegisterOnShutdown(hub.Close) // end live streams so shutdown is instant
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("uptimy-agent listening", "addr", cfg.Addr, "version", version)
+		log.Info("uptimy-agent listening", "addr", cfg.Addr, "version", version.Version)
 		errc <- httpServer.ListenAndServe()
 	}()
 
@@ -164,29 +178,57 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func syncMonitorsFile(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger) error {
+// upgradeNotices are the warnings an upgrade logs: what the database
+// migrations removed, and settings that are gone.
+func upgradeNotices(removed []string, heartbeatURL string) []string {
+	var out []string
+	for _, r := range removed {
+		out = append(out, "upgrade: removed "+r)
+	}
+	if heartbeatURL != "" {
+		out = append(out, "UPTIMY_HEARTBEAT_URL is no longer supported and is ignored; connect to Uptimy Cloud in Settings → Uptimy Cloud instead")
+	}
+	return out
+}
+
+// syncMonitorsFile applies the monitors file, as far as it's valid (see
+// filesync.Apply). A file with problems never stops the agent: they're
+// logged and returned for the UI. Only a database error is fatal.
+func syncMonitorsFile(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger) (*filesync.Problem, error) {
 	var data []byte
+	var name string
 	switch {
 	case cfg.MonitorsYAML != "":
-		data = []byte(cfg.MonitorsYAML)
+		data, name = []byte(cfg.MonitorsYAML), "MONITORS_YAML"
 	case cfg.MonitorsFile != "":
+		name = filepath.Base(cfg.MonitorsFile)
 		var err error
 		if data, err = os.ReadFile(cfg.MonitorsFile); err != nil {
-			return fmt.Errorf("read monitors file: %w", err)
+			log.Error("can't read the monitors file; keeping the monitors it set before", "file", cfg.MonitorsFile, "err", err)
+			return &filesync.Problem{File: name, Errors: []string{err.Error()}}, nil
 		}
 	default:
-		return nil
+		return nil, nil
 	}
-	desired, err := filesync.Parse(data)
+	res, err := filesync.Apply(ctx, st, data)
 	if err != nil {
-		return fmt.Errorf("monitors file: %w", err)
+		return nil, fmt.Errorf("sync monitors file: %w", err)
 	}
-	created, updated, deleted, err := filesync.Sync(ctx, st, desired)
-	if err != nil {
-		return fmt.Errorf("sync monitors file: %w", err)
+	if len(res.Problems) == 0 {
+		log.Info("monitors file applied", "created", res.Created, "updated", res.Updated, "deleted", res.Deleted)
+		return nil, nil
 	}
-	log.Info("monitors file applied", "created", created, "updated", updated, "deleted", deleted)
-	return nil
+	p := &filesync.Problem{File: name, Applied: !res.Held}
+	for _, e := range res.Problems {
+		p.Errors = append(p.Errors, e.Error())
+	}
+	if res.Held {
+		log.Error("the monitors file has an error and wasn't applied; keeping the monitors it set before", "file", name, "err", errors.Join(res.Problems...))
+	} else {
+		log.Error("the monitors file has invalid monitors; they were skipped, the rest applied", "file", name,
+			"created", res.Created, "updated", res.Updated, "deleted", res.Deleted, "err", errors.Join(res.Problems...))
+	}
+	return p, nil
 }
 
 func prune(ctx context.Context, st *store.Store, days int, log *slog.Logger) {

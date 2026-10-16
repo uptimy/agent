@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { ErrorNote, PageHeader } from "@/components/Layout";
 import { ResultBars, StatusDot, StatusLabel } from "@/components/status";
 import { BackLink, EventsCard, MonitorActions, Stat } from "@/components/MonitorPage";
-import { managedBadge } from "@/components/MonitorEmpty";
+import { AcknowledgedBadge, managedBadge } from "@/components/MonitorEmpty";
 
 const ranges = [
   { hours: 1, label: "1h" },
@@ -64,6 +64,7 @@ export function HealthcheckDetail() {
             {h.target && <span className="break-all">{h.target}</span>}
             <span>· every {formatInterval(h.check.interval_seconds)}</span>
             {h.source !== "ui" && <Badge>{managedBadge(h)}</Badge>}
+            {h.status === "down" && h.acknowledged && <AcknowledgedBadge ack={h.acknowledged} long />}
           </span>
         }
         actions={

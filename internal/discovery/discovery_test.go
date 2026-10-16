@@ -24,7 +24,8 @@ const services = `{"items":[
  {"metadata":{"labels":{"upti.my/monitor":"true"},"name":"postgres","namespace":"shop","annotations":{"upti.my/name":"Shop database"}},
   "spec":{"ports":[{"name":"pg","port":5432}]}},
  {"metadata":{"labels":{"upti.my/monitor":"true"},"name":"api","namespace":"shop","annotations":{
-   "upti.my/port":"admin","upti.my/path":"healthz","upti.my/interval":"30s","upti.my/keyword":"ok"}},
+   "upti.my/port":"admin","upti.my/path":"healthz","upti.my/interval":"30s","upti.my/keyword":"ok",
+   "upti.my/failure-threshold":"3","upti.my/recovery-threshold":"2"}},
   "spec":{"ports":[{"name":"grpc","port":9090},{"name":"admin","port":9091}]}},
  {"metadata":{"labels":{"upti.my/monitor":"true"},"name":"broken","namespace":"shop","annotations":{"upti.my/interval":"often"}},
   "spec":{"ports":[{"port":80}]}},
@@ -161,6 +162,12 @@ func TestDiscover(t *testing.T) {
 	}
 	if got["shop/api"].Config.Keyword != "ok" {
 		t.Error("keyword annotation ignored")
+	}
+	if c := got["shop/api"]; c.FailureThreshold != 3 || c.RecoveryThreshold != 2 {
+		t.Errorf("threshold annotations: failure %d, recovery %d", c.FailureThreshold, c.RecoveryThreshold)
+	}
+	if c := got["shop/checkout"]; c.FailureThreshold != 2 || c.RecoveryThreshold != 1 {
+		t.Errorf("default thresholds: failure %d, recovery %d", c.FailureThreshold, c.RecoveryThreshold)
 	}
 	// The broken interval is skipped, the wildcard and catch-all hosts too,
 	// and so are a deployment labeled "false" and one with a typo.

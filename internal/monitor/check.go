@@ -31,7 +31,10 @@ type Check struct {
 	IntervalSeconds  int    `json:"interval_seconds"`
 	TimeoutSeconds   int    `json:"timeout_seconds"`
 	FailureThreshold int    `json:"failure_threshold"` // consecutive failures before it's down
-	Config           Config `json:"config"`
+	// RecoveryThreshold is how many consecutive successes bring it back up
+	// once down, so a flapping target doesn't send down/up pairs.
+	RecoveryThreshold int    `json:"recovery_threshold"`
+	Config            Config `json:"config"`
 }
 
 // Config holds check-type settings: one flat set of keys, so YAML stays
@@ -85,6 +88,12 @@ func (c *Check) normalize() error {
 	if c.FailureThreshold < 1 || c.FailureThreshold > 10 {
 		return errors.New("failure threshold must be between 1 and 10")
 	}
+	if c.RecoveryThreshold == 0 {
+		c.RecoveryThreshold = 1
+	}
+	if c.RecoveryThreshold < 1 || c.RecoveryThreshold > 10 {
+		return errors.New("recovery threshold must be between 1 and 10")
+	}
 	ct, ok := LookupCheckType(c.Type)
 	if !ok {
 		return fmt.Errorf("unsupported check type %q", c.Type)
@@ -104,6 +113,12 @@ type Result struct {
 	OK        bool      `json:"ok"`
 	LatencyMS int64     `json:"latency_ms"`
 	Message   string    `json:"message"`
+	// StatusCode is the HTTP status the check got, whatever it was; 0 when
+	// there was no response or it isn't an HTTP check.
+	StatusCode int `json:"status_code,omitempty"`
+	// ErrorClass is why a failed check failed (timeout, dns, tls, connect,
+	// http_5xx, http_4xx, assertion, other); "" when it was up.
+	ErrorClass string `json:"error_class,omitempty"`
 }
 
 // StatusRange is an inclusive HTTP status code range.

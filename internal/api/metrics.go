@@ -111,6 +111,32 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if s.Alerts != nil {
+		m.family("uptimy_agent_alert_deliveries_total", "counter",
+			"Alert delivery attempts since the agent started, by channel type and result (sent, retry, failed, expired, suppressed).")
+		stats := s.Alerts.Stats()
+		sort.Slice(stats, func(i, j int) bool {
+			if stats[i].ChannelType != stats[j].ChannelType {
+				return stats[i].ChannelType < stats[j].ChannelType
+			}
+			return stats[i].Result < stats[j].Result
+		})
+		for _, st := range stats {
+			m.sample("uptimy_agent_alert_deliveries_total", labels{"channel_type", st.ChannelType, "result", st.Result}, float64(st.Count))
+		}
+		health, err := s.Store.ChannelHealth(r.Context(), time.Now())
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		pending := 0
+		for _, h := range health {
+			pending += h.Pending
+		}
+		m.family("uptimy_agent_alert_deliveries_pending", "gauge", "Alert deliveries waiting to be sent, retries included.")
+		m.sample("uptimy_agent_alert_deliveries_pending", nil, float64(pending))
+	}
+
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	m.family("uptimy_agent_go_goroutines", "gauge", "Goroutines in the agent.")

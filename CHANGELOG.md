@@ -4,6 +4,44 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-16
+
+### Added
+- **Connect to Uptimy Cloud.** Settings → Uptimy Cloud adds the agent to your Uptimy workspace as a private location. Its healthchecks and heartbeats show up there read-only, with their status, uptime and history, for status pages, SLA reports, alert rules, workflows and on-call; change them in the agent and Cloud follows within seconds. The agent still decides every status and alerts on its own; Cloud records what it decided. Each upload checks the agent in, so Uptimy alerts from outside when it goes quiet. Results queue up while Uptimy can't be reached. Passwords and secret query parameters (`password`, `token`, `api_key`, `signature`, ...) in targets are masked before anything is sent, in the UI's lists and alerts too. `UPTIMY_INGEST_URL` points elsewhere for development.
+- **Alerts are retried until they're delivered.** Each alert is saved with the status change that caused it and sent to every channel on its own: a channel that's down or answers with an error is retried with backoff for up to an hour, while one that refuses it (a deleted webhook, a revoked token) isn't retried. Alerts about a monitor reach a channel in order, so a recovery never arrives before its outage. Alerts waiting to go out survive restarts and crashes.
+- **See whether an alert arrived.** Each event on a monitor's page shows how its alert went on every channel (sent, retrying, refused, given up, or not sent and why) with **Retry**, and **Notifications** shows each channel's last alert and recent failures. New metrics: `uptimy_agent_alert_deliveries_total` and `uptimy_agent_alert_deliveries_pending`.
+- **Recovery threshold:** `recovery_threshold` (in the form, YAML and the `upti.my/recovery-threshold` annotation) is how many good checks in a row bring a down healthcheck back up, so a flapping target doesn't send down/up pairs. `upti.my/failure-threshold` sets the failure threshold of discovered monitors.
+- **Reminders while down:** a channel can remind you every 15 minutes to once a day while a monitor stays down, so a muted channel or a missed message doesn't leave an outage unnoticed.
+- **Acknowledge** a down monitor to stop its reminders and tell your channels who's on it. Lists and the monitor's page show who acknowledged it.
+- `uptimy-agent validate monitors.yaml` checks a monitors file in CI without starting the agent: every problem with its monitor, unset `${VAR}`s as warnings (`--strict-env` for errors), and `--format json`.
+- `TRUSTED_PROXIES` sets which proxies' `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed. By default, loopback and private networks.
+- Webhook alerts carry an `id` that's the same on every attempt, and reminders and acknowledgements a `type`.
+- The Uptime Kuma importer points out monitors that re-sent their alerts while down, so you can turn on reminders.
+- **Import from Railway:** Settings → Import from Railway turns the services of a Railway project into HTTP checks (private when the agent runs in the project), database checks and cron heartbeats, from a project token that isn't stored.
+
+### Changed
+- **Mistakes in `monitors.yaml` no longer stop the agent.** A file that doesn't parse (or has two monitors with one name) is held back and the monitors stay as they were; otherwise the valid monitors are applied and each invalid one keeps its last good settings. The error is logged and shown on the dashboard, the monitor lists and Settings.
+- A database target whose `${VAR}` is set to something that isn't a valid URL fails only that monitor's checks, naming the variable (not its value), instead of stopping the agent. `uptimy-agent validate` warns about it.
+- Requests carry `User-Agent: uptimy-agent/<version>` (was `uptimy-agent`), in the same form as Uptimy Cloud's checkers but distinct from them.
+- The upgrade logs what it removed (Uptimy alert channels, a pasted check-in URL), and the agent warns at startup while `UPTIMY_HEARTBEAT_URL` is still set.
+
+### Upgrading from 0.1.8
+- Back up `/data` first: rolling back to 0.1.8 after upgrading isn't possible, because the database schema is newer.
+- The pasted heartbeat URL and `UPTIMY_HEARTBEAT_URL` are removed. Connect via **Settings → Uptimy Cloud** instead.
+- Agents connected on 0.1.8 that are over the plan's agent limit won't sync until one is disconnected or the plan is upgraded.
+- The Cloud connection belongs to the data volume (its install id). A cloned data volume (two agents sharing an install id) isn't supported, and a stateless deployment (no volume) can't keep a Cloud connection.
+
+### Removed
+- **Watch the watcher** as a separate heartbeat: it's part of **Connect to Uptimy Cloud** now, which checks the agent in with every upload (your plan's check interval) and alerts after two missed uploads unless you choose a longer delay. Pasting a heartbeat URL and `UPTIMY_HEARTBEAT_URL` (Helm `uptimy.heartbeatUrl`) are gone; an agent that was checking in with one isn't watched until you connect it.
+- The **Uptimy** alert channel. Connect to Uptimy Cloud instead: agent monitors become real Uptimy monitors, whose outages open incidents there. Existing Uptimy channels are deleted on upgrade (Uptimy stopped accepting them on 2026-10-14).
+
+### Fixed
+- A down alert held for a maintenance window is no longer forgotten when the agent restarts during the window.
+- Alerts no longer get lost when the agent shuts down right after a status change.
+- A monitor down for longer than `RETENTION_DAYS` no longer comes back as pending after a restart and alerts again: its current status is kept.
+- Behind a proxy, failed sign-ins were counted against the proxy's address, so one person guessing passwords could lock everyone out for a while. They're now counted per client, from `X-Forwarded-For` sent by a trusted proxy.
+- `X-Forwarded-Proto` is only believed from trusted proxies when deciding whether the session cookie is Secure.
+
 ## [0.1.8] - 2026-10-07
 
 ### Changed
@@ -100,7 +138,8 @@ First public release.
 - API tokens (full or read-only) for scripts and CI.
 - Import monitors and notifications from Uptime Kuma (`kuma.db`), with a review step.
 
-[Unreleased]: https://github.com/uptimy/agent/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/uptimy/agent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/uptimy/agent/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/uptimy/agent/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/uptimy/agent/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/uptimy/agent/compare/v0.1.5...v0.1.6

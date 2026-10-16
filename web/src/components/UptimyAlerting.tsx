@@ -115,7 +115,7 @@ export function UptimyAlertingSettings({ canEdit }: { canEdit: boolean }) {
             ? "You can change this once the maintenance window ends."
             : s.paused
               ? "You can change this once alerts are resumed."
-              : "Shorter catches outages sooner; longer rides out restarts and redeploys without paging anyone. The agent checks in every minute."}
+              : "Longer rides out restarts and redeploys."}
         </p>
       </div>
 
@@ -193,8 +193,7 @@ export function UptimyAlertingSettings({ canEdit }: { canEdit: boolean }) {
             <p className="text-sm text-muted-foreground">An admin can open a maintenance window here.</p>
           )}
           <p className="text-xs text-muted-foreground">
-            This pushes the heartbeat&apos;s alert deadline back rather than pausing it, so it stays active in Uptimy
-            and still alerts if the agent isn&apos;t back when the window ends.
+            You&apos;re still alerted if the agent isn&apos;t back when it ends.
           </p>
         </div>
       )}

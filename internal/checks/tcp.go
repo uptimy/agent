@@ -15,7 +15,7 @@ func tcp(ctx context.Context, target string) Outcome {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "tcp", target)
 	if err != nil {
-		return Outcome{Message: trimErr(err)}
+		return failure(err)
 	}
 	conn.Close()
 	return Outcome{OK: true, Message: "connected"}

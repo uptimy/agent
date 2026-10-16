@@ -34,13 +34,13 @@ func apiFailure(err error, kind, ns, name string) (Outcome, bool) {
 	case err == nil:
 		return Outcome{}, false
 	case kube.IsNotFound(err):
-		return Outcome{Message: fmt.Sprintf("%s %s/%s not found", kind, ns, name)}, true
+		return Outcome{Message: fmt.Sprintf("%s %s/%s not found", kind, ns, name), ErrorClass: classAssertion}, true
 	case kube.IsForbidden(err):
 		return Outcome{Message: "forbidden: the agent's service account can't read " + kind + "s (check RBAC)"}, true
 	case errors.As(err, &se):
 		return Outcome{Message: se.Error()}, true
 	}
-	return Outcome{Message: trimErr(err)}, true
+	return failure(err), true
 }
 
 type workloadStatus struct {
@@ -81,7 +81,10 @@ func checkWorkload(ctx context.Context, k *kube.Client, ns, kind, name string) O
 	if desired == 0 {
 		return Outcome{OK: true, Message: "scaled to zero"}
 	}
-	return Outcome{OK: ready >= desired, Message: msg}
+	if ready < desired {
+		return Outcome{Message: msg, ErrorClass: classAssertion}
+	}
+	return Outcome{OK: true, Message: msg}
 }
 
 type endpointSlices struct {
@@ -126,7 +129,11 @@ func checkService(ctx context.Context, k *kube.Client, ns, name string) Outcome 
 		}
 	}
 	if len(total) > 0 {
-		return Outcome{OK: len(ready) > 0, Message: fmt.Sprintf("%d/%d endpoints ready", len(ready), len(total))}
+		msg := fmt.Sprintf("%d/%d endpoints ready", len(ready), len(total))
+		if len(ready) == 0 {
+			return Outcome{Message: msg, ErrorClass: classAssertion}
+		}
+		return Outcome{OK: true, Message: msg}
 	}
 	// No endpoints at all: say why.
 	var svc struct {
@@ -139,7 +146,7 @@ func checkService(ctx context.Context, k *kube.Client, ns, name string) Outcome 
 		return out
 	}
 	if svc.Spec.Type == "ExternalName" {
-		return Outcome{Message: "an ExternalName Service has no endpoints; check its hostname with an HTTP or TCP check"}
+		return Outcome{Message: "an ExternalName Service has no endpoints; check its hostname with an HTTP or TCP check", ErrorClass: classAssertion}
 	}
-	return Outcome{Message: "no endpoints: no running pod matches the Service's selector"}
+	return Outcome{Message: "no endpoints: no running pod matches the Service's selector", ErrorClass: classAssertion}
 }

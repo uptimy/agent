@@ -26,6 +26,8 @@ type heartbeatSummary struct {
 	Stats30d store.RunStats            `json:"stats_30d"`
 
 	InMaintenance bool `json:"in_maintenance"`
+	// Acknowledged is who's on the current outage, if anyone.
+	Acknowledged *monitor.Acknowledgement `json:"acknowledged"`
 }
 
 func (s *Server) summarizeHeartbeat(r *http.Request, m monitor.Monitor) (heartbeatSummary, error) {
@@ -33,6 +35,10 @@ func (s *Server) summarizeHeartbeat(r *http.Request, m monitor.Monitor) (heartbe
 		Monitor: redactForViewer(r, m), Status: s.Scheduler.Status(m),
 		Schedule: m.Heartbeat.Describe(), Tracking: s.Scheduler.Heartbeat(m),
 		InMaintenance: s.Scheduler.InMaintenance(m.ID),
+	}
+	var err error
+	if sum.Acknowledged, err = s.Store.Acknowledgement(r.Context(), m.ID); err != nil {
+		return sum, err
 	}
 	recent, err := s.Store.RecentRuns(r.Context(), m.ID, recentRuns)
 	if err != nil {

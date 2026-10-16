@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -208,7 +207,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 		return
 	}
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if !s.limiter.allow(ip) {
 		writeError(w, http.StatusTooManyRequests, "too many attempts, try again in a few minutes")
 		return
@@ -271,20 +270,20 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, u store.Us
 		s.internalError(w, r, err)
 		return
 	}
-	c := sessionCookieFor(r, token) //nolint:gosec // G124: Secure whenever served over HTTPS; see sessionCookieFor
+	c := s.sessionCookieFor(r, token) //nolint:gosec // G124: Secure whenever served over HTTPS; see sessionCookieFor
 	c.Expires = expires
 	http.SetCookie(w, c)
 	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "user": s.me(u)})
 }
 
 // sessionCookieFor builds the session cookie. It's Secure whenever the agent
-// is reached over HTTPS (directly or behind a proxy); plain-HTTP installs on
-// localhost or a private network must still be able to sign in.
-func sessionCookieFor(r *http.Request, value string) *http.Cookie {
+// is reached over HTTPS (directly or behind a trusted proxy); plain-HTTP
+// installs on localhost or a private network must still be able to sign in.
+func (s *Server) sessionCookieFor(r *http.Request, value string) *http.Cookie {
 	return &http.Cookie{ //nolint:gosec // G124: Secure whenever the request came over HTTPS (see above)
 		Name: sessionCookie, Value: value, Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteLaxMode,
-		Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		Secure: s.isHTTPS(r),
 	}
 }
 
@@ -294,7 +293,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 			s.Log.Warn("deleting session on sign-out", "err", err)
 		}
 	}
-	c := sessionCookieFor(r, "") //nolint:gosec // G124: see sessionCookieFor
+	c := s.sessionCookieFor(r, "") //nolint:gosec // G124: see sessionCookieFor
 	c.MaxAge = -1
 	http.SetCookie(w, c)
 	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
@@ -369,14 +368,6 @@ func (s *Server) signOutOthers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"count": 1})
-}
-
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 // loginLimiter allows a handful of failed logins per IP per window.

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/checks"
+	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/events"
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/notify"
@@ -22,10 +23,11 @@ import (
 )
 
 type fixture struct {
-	store  *store.Store
-	sched  *Scheduler
-	alerts chan notify.Alert
-	stop   func()
+	store   *store.Store
+	sched   *Scheduler
+	alerter *delivery.Dispatcher
+	alerts  chan notify.Alert
+	stop    func()
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -55,9 +57,15 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) start(t *testing.T) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	f.sched = New(f.store, checks.New(nil), notify.NewSender(log), events.NewHub(), log)
+	hub := events.NewHub()
+	f.alerter = delivery.New(f.store, notify.NewSender(log), hub, log)
+	f.alerter.Backoff = []time.Duration{50 * time.Millisecond}
+	f.sched = New(f.store, checks.New(nil), f.alerter, hub, log)
+	f.sched.reminderEvery = 50 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
-	f.stop = func() { cancel(); f.sched.Wait() }
+	done := make(chan struct{})
+	go func() { f.alerter.Run(ctx, time.Second); close(done) }()
+	f.stop = func() { cancel(); f.sched.Wait(); <-done }
 	t.Cleanup(f.stop)
 	if err := f.sched.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -293,5 +301,129 @@ func TestHeartbeatReport(t *testing.T) {
 	eventually(t, "on time", func() bool { return f.sched.Heartbeat(fast).State == monitor.StateOnTime })
 	if run, _ := f.store.LastRun(context.Background(), fast.ID); run.ID != missed.ID || !run.OnTime || run.Outcome != monitor.OutcomeSuccess {
 		t.Fatalf("the missed run should be on time after all: %+v", run)
+	}
+}
+
+func TestRecoveryThreshold(t *testing.T) {
+	var healthy atomic.Bool
+	healthy.Store(true)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !healthy.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	defer target.Close()
+
+	f := newFixture(t)
+	m := monitor.Monitor{Kind: monitor.KindHealthcheck, Name: "web", Check: &monitor.Check{
+		Type: monitor.TypeHTTP, Target: target.URL, IntervalSeconds: 3600, FailureThreshold: 1, RecoveryThreshold: 3,
+	}}
+	if err := m.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	m = f.create(t, m)
+	status := func(want monitor.Status) func() bool {
+		return func() bool { return f.sched.Status(m) == want }
+	}
+	// From pending, the first good check is enough.
+	eventually(t, "up", status(monitor.StatusUp))
+
+	check := func(ok bool) {
+		t.Helper()
+		healthy.Store(ok)
+		before := len(results(t, f, m.ID))
+		f.sched.CheckNow(m.ID)
+		eventually(t, "the check", func() bool { return len(results(t, f, m.ID)) > before })
+	}
+	check(false)
+	eventually(t, "down", status(monitor.StatusDown))
+	if a := f.alert(t); a.Status != "down" {
+		t.Fatalf("alert %+v", a)
+	}
+
+	// Two good checks, a bad one (which restarts the count), then three good.
+	for i, ok := range []bool{true, true, false, true, true} {
+		check(ok)
+		if got := f.sched.Status(m); got != monitor.StatusDown {
+			t.Fatalf("check %d: %s before 3 good checks in a row", i+1, got)
+		}
+	}
+	check(true)
+	eventually(t, "up again", status(monitor.StatusUp))
+	if a := f.alert(t); a.Status != "up" {
+		t.Fatalf("alert %+v", a)
+	}
+	select {
+	case a := <-f.alerts:
+		t.Fatalf("flapping alerted: %+v", a)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func results(t *testing.T, f *fixture, id int64) []monitor.Result {
+	t.Helper()
+	rs, err := f.store.RecentResults(context.Background(), id, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
+
+// A start that never finishes is closed as missed after maxRunDuration, so
+// it doesn't show as running for good (or hold up the Cloud upload); older
+// starts left behind are closed on restore.
+func TestAbandonedRunsAreClosed(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	m, err := f.store.CreateMonitor(ctx, monitor.Monitor{Kind: monitor.KindHeartbeat, Name: "export", Heartbeat: &monitor.Heartbeat{
+		Token: "tok-abandoned", EverySeconds: 3600, GraceSeconds: 300,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	for _, ago := range []time.Duration{30 * time.Hour, 25 * time.Hour} {
+		started := now().Add(-ago)
+		run, err := f.store.InsertRun(ctx, monitor.Run{MonitorID: m.ID, StartedAt: &started, Outcome: monitor.OutcomeRunning})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, run.ID)
+	}
+	f.sched.Upsert(m)
+	eventually(t, "abandoned runs closed", func() bool {
+		runs, _ := f.store.RunsByID(ctx, ids)
+		for _, r := range runs {
+			if r.Outcome != monitor.OutcomeMissed || r.Message != abandonedRun {
+				return false
+			}
+		}
+		return len(runs) == 2
+	})
+	if st := f.sched.Heartbeat(m); st.Running != nil {
+		t.Fatalf("still running: %+v", st)
+	}
+}
+
+// A run that pinged /start, ran past its deadline (recorded missed) and
+// then finished is one run: late, with its duration, and no start left
+// running.
+func TestLateRunKeepsItsStart(t *testing.T) {
+	f := newFixture(t)
+	m := f.create(t, fastHeartbeat("tok-late-start"))
+	f.sched.Ping("tok-late-start", SignalStart, "")
+	eventually(t, "running", func() bool { return f.sched.Heartbeat(m).Running != nil })
+	eventually(t, "missed", func() bool { return f.sched.Heartbeat(m).State == monitor.StateMissed })
+	f.sched.Ping("tok-late-start", SignalSuccess, "")
+	eventually(t, "back on schedule", func() bool { return f.sched.Heartbeat(m).State == monitor.StateOnTime })
+	runs, _ := f.store.RecentRuns(context.Background(), m.ID, 10)
+	for _, r := range runs {
+		if r.Outcome == monitor.OutcomeRunning {
+			t.Fatalf("a start was left running: %+v", runs)
+		}
+	}
+	last, _ := f.store.LastRun(context.Background(), m.ID)
+	if last.Outcome != monitor.OutcomeSuccess || last.StartedAt == nil || last.DurationMS == nil {
+		t.Fatalf("late run %+v, want success with its start and duration", last)
 	}
 }

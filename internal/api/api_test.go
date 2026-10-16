@@ -16,9 +16,12 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/checks"
+	"github.com/uptimy/agent/internal/cloudsync"
 	"github.com/uptimy/agent/internal/config"
 	"github.com/uptimy/agent/internal/connect"
+	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/events"
+	"github.com/uptimy/agent/internal/filesync"
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/notify"
 	"github.com/uptimy/agent/internal/scheduler"
@@ -102,16 +105,24 @@ func newTestServerWithConfig(t *testing.T, cfg config.Config) (*client, *store.S
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	hub := events.NewHub()
 	sender := notify.NewSender(log)
-	sched := scheduler.New(st, checks.New(nil), sender, hub, log)
+	alerts := delivery.New(st, sender, hub, log)
+	sched := scheduler.New(st, checks.New(nil), alerts, hub, log)
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(func() { cancel(); sched.Wait() })
+	alertsDone := make(chan struct{})
+	go func() { alerts.Run(ctx, time.Second); close(alertsDone) }()
+	t.Cleanup(func() { cancel(); sched.Wait(); <-alertsDone })
 	if err := sched.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
+	syncer := cloudsync.New(st, func() *connect.Client {
+		c := connect.NewClient(cfg.UptimyAPIURL, cfg.UptimyHeartbeatsURL)
+		c.IngestURL = cfg.UptimyAPIURL // the fake Uptimy serves ingest too
+		return c
+	}, cfg.AgentName, "test", log)
 	srv := &Server{
 		Config: cfg, Version: "test",
-		Store: st, Scheduler: sched, Sender: sender, Hub: hub, Log: log,
-		Watchdog: connect.NewWatchdog("", false, time.Minute, "test", sched.Counts, log),
+		Store: st, Scheduler: sched, Sender: sender, Alerts: alerts, Hub: hub, Log: log,
+		Sync: syncer,
 	}
 	ts := httptest.NewServer(srv.Handler(http.NotFoundHandler()))
 	t.Cleanup(ts.Close)
@@ -237,48 +248,6 @@ func TestStatusPageShowsOnlyRealRecoveries(t *testing.T) {
 	}
 	if events[0].(map[string]any)["status"] != "up" || events[1].(map[string]any)["status"] != "down" {
 		t.Fatalf("unexpected order/status: %v", events)
-	}
-}
-
-func TestConnectHeartbeat(t *testing.T) {
-	pings := make(chan struct{}, 10)
-	uptimy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { pings <- struct{}{} }))
-	defer uptimy.Close()
-
-	c, st := newTestServerWithStore(t)
-	c.login("admin", adminPassword)
-
-	if code, _ := c.do("PUT", "/api/uptimy/heartbeat", map[string]string{"url": "nope"}); code != 400 {
-		t.Fatalf("bad URL accepted: %d", code)
-	}
-	unknown := httptest.NewServer(http.NotFoundHandler())
-	defer unknown.Close()
-	if code, body := c.do("PUT", "/api/uptimy/heartbeat", map[string]string{"url": unknown.URL + "/v1/monitors/typo"}); code != 422 || body["error"] == nil {
-		t.Fatalf("heartbeat Uptimy rejected was accepted: %d %v", code, body)
-	}
-	if saved, _ := st.HeartbeatURL(context.Background()); saved != "" {
-		t.Fatalf("rejected URL was saved: %q", saved)
-	}
-	code, body := c.do("PUT", "/api/uptimy/heartbeat", map[string]string{"url": uptimy.URL + "/v1/monitors/tok"})
-	if code != 200 || body["enabled"] != true || body["last_ok"] != true {
-		t.Fatalf("connect: %d %v", code, body)
-	}
-	select {
-	case <-pings:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no ping reached Uptimy")
-	}
-	if saved, _ := st.HeartbeatURL(context.Background()); saved != uptimy.URL+"/v1/monitors/tok" {
-		t.Fatalf("URL not persisted: %q", saved)
-	}
-	if code, body := c.do("POST", "/api/uptimy/heartbeat/test", nil); code != 200 || body["last_ok"] != true {
-		t.Fatalf("test ping: %d %v", code, body)
-	}
-	if code, body := c.do("DELETE", "/api/uptimy/heartbeat", nil); code != 200 || body["enabled"] != false {
-		t.Fatalf("disconnect: %d %v", code, body)
-	}
-	if saved, _ := st.HeartbeatURL(context.Background()); saved != "" {
-		t.Fatalf("URL not cleared: %q", saved)
 	}
 }
 
@@ -564,4 +533,18 @@ func createTCP(t *testing.T, st *store.Store, name, target, source string) monit
 		t.Fatal(err)
 	}
 	return m
+}
+
+func TestInfoMonitorsFileProblem(t *testing.T) {
+	c := newTestServer(t)
+	c.login("admin", adminPassword)
+	if _, body := c.do("GET", "/api/info", nil); body["monitors_file_error"] != nil {
+		t.Fatalf("no problem: %v", body["monitors_file_error"])
+	}
+	c.srv.MonitorsFileProblem = &filesync.Problem{File: "monitors.yaml", Errors: []string{"yaml: line 12: did not find expected key"}}
+	_, body := c.do("GET", "/api/info", nil)
+	p, _ := body["monitors_file_error"].(map[string]any)
+	if p["file"] != "monitors.yaml" || p["applied"] != false || p["errors"].([]any)[0] != "yaml: line 12: did not find expected key" {
+		t.Fatalf("problem: %v", body["monitors_file_error"])
+	}
 }
