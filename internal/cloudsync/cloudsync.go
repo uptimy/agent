@@ -243,6 +243,7 @@ func (s *Syncer) cycle(ctx context.Context) time.Duration {
 	interval, statusEvery, _ := intervals(conn)
 	s.mu.Lock()
 	s.statusEvery = statusEvery
+	s.status.LocationUUID, s.status.UploadIntervalSeconds = conn.LocationUUID, int(interval.Seconds())
 	s.mu.Unlock()
 
 	full := s.now().Sub(s.lastFull) >= fullReconcileEvery

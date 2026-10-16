@@ -737,6 +737,10 @@ func TestLocationGetsNameAndVersionOnStart(t *testing.T) {
 	if conn, _ := e.st.UptimyConnection(ctx); conn.LocationUUID != "loc-1" {
 		t.Fatalf("connection %+v, want the location kept", conn)
 	}
+	// The status shows the stored intervals without setting up again.
+	if st := restarted.Status(); st.UploadIntervalSeconds != 60 || st.LocationUUID != "loc-1" {
+		t.Fatalf("status after a restart %+v, want the stored location and interval", st)
+	}
 	restarted.Version = "0.3.2"
 	restarted.cycle(ctx)
 	if e.cloud.locationPuts != 3 {
