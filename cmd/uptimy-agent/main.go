@@ -74,6 +74,9 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer st.Close()
+	for _, n := range upgradeNotices(st.Removed, os.Getenv("UPTIMY_HEARTBEAT_URL")) {
+		log.Warn(n)
+	}
 
 	generated, err := api.EnsureDefaultAdmin(ctx, st, cfg.AdminUsername, cfg.AdminPassword)
 	if err != nil {
@@ -175,6 +178,19 @@ func run(log *slog.Logger) error {
 	}
 	sched.Wait()
 	return nil
+}
+
+// upgradeNotices are the warnings an upgrade logs: what the database
+// migrations removed, and settings that are gone.
+func upgradeNotices(removed []string, heartbeatURL string) []string {
+	var out []string
+	for _, r := range removed {
+		out = append(out, "upgrade: removed "+r)
+	}
+	if heartbeatURL != "" {
+		out = append(out, "UPTIMY_HEARTBEAT_URL is no longer supported and is ignored; connect to Uptimy Cloud in Settings → Uptimy Cloud instead")
+	}
+	return out
 }
 
 // syncMonitorsFile applies the monitors file, as far as it's valid (see

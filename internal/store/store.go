@@ -19,6 +19,10 @@ var ErrNotFound = errors.New("not found")
 // Store wraps the SQLite database.
 type Store struct {
 	db *sql.DB
+	// Removed says what this Open's migrations deleted (settings or
+	// channels an upgrade dropped), for the startup log. Empty after the
+	// first start on a version.
+	Removed []string
 }
 
 // Open opens (and creates, if needed) the database at path and migrates it.
@@ -301,6 +305,37 @@ var migrations = []string{
 	ALTER TABLE results ADD COLUMN error_class TEXT NOT NULL DEFAULT '';`,
 }
 
+// migrationNotes, by migration number, say what a migration is about to
+// delete, so an upgrade logs it once.
+var migrationNotes = map[int]func(context.Context, *sql.Tx) ([]string, error){
+	7: func(ctx context.Context, tx *sql.Tx) ([]string, error) {
+		var removed []string
+		rows, err := tx.QueryContext(ctx, "SELECT name FROM notifiers WHERE type = 'uptimy'")
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				return nil, err
+			}
+			removed = append(removed, fmt.Sprintf("the Uptimy alert channel %q (Uptimy Cloud sync replaces it)", name))
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM settings WHERE key = 'uptimy_heartbeat_url'").Scan(&n); err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			removed = append(removed, "the pasted Uptimy check-in URL (connect via Settings → Uptimy Cloud instead)")
+		}
+		return removed, nil
+	},
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	var version int
 	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
@@ -313,6 +348,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
+		}
+		if notes := migrationNotes[i+1]; notes != nil {
+			removed, err := notes(ctx, tx)
+			if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migration %d: %w", i+1, err)
+			}
+			s.Removed = append(s.Removed, removed...)
 		}
 		if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
 			tx.Rollback()

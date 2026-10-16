@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/uptimy/agent/internal/config"
@@ -41,5 +42,15 @@ func TestSyncMonitorsFileProblems(t *testing.T) {
 	}
 	if all, _ := st.ListMonitors(ctx); len(all) != 1 {
 		t.Fatalf("the held file changed the monitors: %d", len(all))
+	}
+}
+
+func TestUpgradeNotices(t *testing.T) {
+	if n := upgradeNotices(nil, ""); len(n) != 0 {
+		t.Fatalf("nothing to say: %q", n)
+	}
+	n := upgradeNotices([]string{"the pasted Uptimy check-in URL"}, "https://heartbeats.upti.my/abc")
+	if len(n) != 2 || n[0] != "upgrade: removed the pasted Uptimy check-in URL" || !strings.Contains(n[1], "UPTIMY_HEARTBEAT_URL is no longer supported") || strings.Contains(n[1], "abc") {
+		t.Fatalf("notices: %q", n)
 	}
 }
