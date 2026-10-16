@@ -5,7 +5,7 @@ import { ApiError, api, type AuthState, type User } from "@/lib/api";
 import { useLiveUpdates } from "@/lib/live";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, Input } from "@/components/ui/input";
+import { Field, Input, PasswordInput } from "@/components/ui/input";
 import { ErrorNote, Logo } from "./Layout";
 
 function useAuth() {
@@ -154,9 +154,8 @@ function LoginForm() {
                   />
                 </Field>
                 <Field label="Password" htmlFor="password">
-                  <Input
+                  <PasswordInput
                     id="password"
-                    type="password"
                     autoComplete="current-password"
                     required
                     value={password}
@@ -223,9 +222,8 @@ function ChangePasswordForm({ user }: { user: User }) {
             {/* Lets password managers attach the new password to the right account. */}
             <input type="text" autoComplete="username" value={user.username} readOnly hidden />
             <Field label="Temporary password" htmlFor="current">
-              <Input
+              <PasswordInput
                 id="current"
-                type="password"
                 autoComplete="current-password"
                 required
                 autoFocus
@@ -234,9 +232,8 @@ function ChangePasswordForm({ user }: { user: User }) {
               />
             </Field>
             <Field label="New password" htmlFor="new" hint="At least 8 characters.">
-              <Input
+              <PasswordInput
                 id="new"
-                type="password"
                 autoComplete="new-password"
                 minLength={8}
                 required
@@ -245,9 +242,8 @@ function ChangePasswordForm({ user }: { user: User }) {
               />
             </Field>
             <Field label="Confirm new password" htmlFor="confirm">
-              <Input
+              <PasswordInput
                 id="confirm"
-                type="password"
                 autoComplete="new-password"
                 minLength={8}
                 required

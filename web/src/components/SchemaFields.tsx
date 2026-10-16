@@ -1,8 +1,6 @@
-import { useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
 import type { ConfigValue, SchemaField } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { Field, Input, Select, Switch, Textarea } from "@/components/ui/input";
+import { Field, Input, PasswordInput, Select, Switch, Textarea } from "@/components/ui/input";
 
 /**
  * Renders a type's settings from its description (internal/schema.Field), so
@@ -116,28 +114,15 @@ function SecretInput({
   value: string;
   onChange: (value: string) => void;
 }) {
-  const [shown, setShown] = useState(false);
   return (
-    <div className="relative">
-      <Input
-        id={id}
-        type={shown ? "text" : "password"}
-        autoComplete="off"
-        spellCheck={false}
-        required={required}
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="pr-10"
-      />
-      <button
-        type="button"
-        aria-label={shown ? "Hide" : "Show"}
-        onClick={() => setShown((s) => !s)}
-        className="absolute top-1/2 right-1 grid size-7 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-      >
-        {shown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-      </button>
-    </div>
+    <PasswordInput
+      id={id}
+      autoComplete="off"
+      spellCheck={false}
+      required={required}
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
   );
 }

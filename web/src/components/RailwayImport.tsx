@@ -6,7 +6,7 @@ import { useCheckTypeLabel } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Input, PasswordInput } from "@/components/ui/input";
 import { ErrorNote } from "@/components/Layout";
 import { ImportResult, Item, ItemList, SkippedList } from "@/components/ImportReview";
 
@@ -66,8 +66,7 @@ function EnterToken({ onPlan }: { onPlan: (p: RailwayPlan) => void }) {
       }}
     >
       <div className="flex flex-col gap-2 sm:flex-row">
-        <Input
-          type="password"
+        <PasswordInput
           autoComplete="off"
           placeholder="Project token"
           aria-label="Railway project token"

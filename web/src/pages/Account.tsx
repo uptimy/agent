@@ -6,7 +6,7 @@ import { formatDateTime, timeAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Field, Input } from "@/components/ui/input";
+import { Field, PasswordInput } from "@/components/ui/input";
 import { ErrorNote, PageHeader } from "@/components/Layout";
 import { useMe, useSignOut } from "@/components/AuthGate";
 import { Avatar } from "@/components/UserMenu";
@@ -106,9 +106,8 @@ function PasswordCard() {
           {/* Lets password managers attach the new password to the right account. */}
           <input type="text" autoComplete="username" value={me.username} readOnly hidden />
           <Field label="Current password" htmlFor="cur">
-            <Input
+            <PasswordInput
               id="cur"
-              type="password"
               autoComplete="current-password"
               required
               value={current}
@@ -116,9 +115,8 @@ function PasswordCard() {
             />
           </Field>
           <Field label="New password" htmlFor="new" hint="At least 8 characters.">
-            <Input
+            <PasswordInput
               id="new"
-              type="password"
               autoComplete="new-password"
               minLength={8}
               required
@@ -127,9 +125,8 @@ function PasswordCard() {
             />
           </Field>
           <Field label="Confirm new password" htmlFor="confirm">
-            <Input
+            <PasswordInput
               id="confirm"
-              type="password"
               autoComplete="new-password"
               minLength={8}
               required

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const field =
@@ -6,6 +7,25 @@ const field =
 
 export function Input({ className, ...props }: React.ComponentProps<"input">) {
   return <input className={cn(field, className)} {...props} />;
+}
+
+/** A password or secret: hidden by default, with a toggle to see what was typed. */
+export function PasswordInput({ className, ...props }: Omit<React.ComponentProps<"input">, "type">) {
+  const [shown, setShown] = React.useState(false);
+  return (
+    <div className="relative">
+      <input type={shown ? "text" : "password"} className={cn(field, "pr-10", className)} {...props} />
+      <button
+        type="button"
+        aria-label={shown ? "Hide" : "Show"}
+        aria-pressed={shown}
+        onClick={() => setShown((s) => !s)}
+        className="absolute top-1/2 right-1 grid size-7 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        {shown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+      </button>
+    </div>
+  );
 }
 
 export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
