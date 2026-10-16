@@ -38,7 +38,7 @@ metadata:
     upti.my/interval: 30s        # default: 1m
 ```
 
-All annotations (`port`, `type`, `scheme`, `expected-status`, `keyword`, and `grace` for CronJobs) are in the [agent README](https://github.com/uptimy/agent#auto-discovery). Removing the label deletes the monitor. Discovery lists only labeled objects; turn it off with `discovery.enabled: false`.
+All annotations (`port`, `type`, `scheme`, `expected-status`, `keyword`, and `grace` for CronJobs) are in the [agent docs](https://github.com/uptimy/agent/blob/main/docs/kubernetes.md#auto-discovery). Removing the label deletes the monitor. Discovery lists only labeled objects; turn it off with `discovery.enabled: false`.
 
 ## Monitors in values
 

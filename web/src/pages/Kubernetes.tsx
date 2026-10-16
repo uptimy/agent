@@ -112,7 +112,12 @@ function GettingStarted() {
           Annotations like <code className="font-mono text-xs">upti.my/name</code>,{" "}
           <code className="font-mono text-xs">upti.my/path</code> and{" "}
           <code className="font-mono text-xs">upti.my/interval</code> adjust the check.{" "}
-          <a href="https://github.com/uptimy/agent#auto-discovery" target="_blank" rel="noopener" className="underline">
+          <a
+            href="https://github.com/uptimy/agent/blob/main/docs/kubernetes.md#auto-discovery"
+            target="_blank"
+            rel="noopener"
+            className="underline"
+          >
             All annotations
           </a>
         </p>
