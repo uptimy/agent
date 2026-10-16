@@ -70,6 +70,12 @@ heartbeats:
 		if code, out, _ := run(db, "--format", "json", "--strict-env", "-"); code != 0 || !strings.Contains(out, `"valid": true`) {
 			t.Fatalf("with the variable set: exit %d %s", code, out)
 		}
+		// Set, but not to something that makes a URL.
+		t.Setenv("VALIDATE_TEST_PW", "x@y/z")
+		pg := "healthchecks:\n  - name: DB\n    type: postgres\n    target: ${VALIDATE_TEST_PW}\n"
+		if code, out, _ := run(pg, "--format", "json", "--strict-env", "-"); code != 1 || !strings.Contains(out, "VALIDATE_TEST_PW isn't a postgres URL") || strings.Contains(out, "x@y") {
+			t.Fatalf("with the variable set to a non-URL: exit %d %s", code, out)
+		}
 	})
 
 	t.Run("usage", func(t *testing.T) {

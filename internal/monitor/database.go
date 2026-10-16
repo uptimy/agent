@@ -77,7 +77,22 @@ func (c Check) ResolvedTarget() (string, error) {
 		}
 		return v
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	// A target with variables is validated once they are filled in, so a
+	// variable set to something that isn't a URL fails this check rather
+	// than the monitor's save (or the agent's start). The message names the
+	// variables, never their values.
+	if refs := c.EnvRefs(); len(refs) > 0 {
+		if err := c.validateURL(out); err != nil {
+			if len(refs) == 1 && c.Target == "${"+refs[0]+"}" {
+				return "", fmt.Errorf("%s isn't %s", refs[0], err)
+			}
+			return "", fmt.Errorf("the target with %s filled in isn't %s", strings.Join(refs, ", "), err)
+		}
+	}
+	return out, nil
 }
 
 // DisplayTarget is the target with any password masked, for the UI list,
@@ -117,21 +132,19 @@ func (c *Check) normalizeDatabase() error {
 	if c.Target == "" {
 		return errors.New("connection URL is required")
 	}
-	unset := false
-	for _, ref := range envRef.FindAllStringSubmatch(c.Target, -1) {
-		if isAgentEnv(ref[1]) {
-			return fmt.Errorf("environment variable %s is reserved for the agent's own settings", ref[1])
-		}
-		if _, ok := os.LookupEnv(ref[1]); !ok {
-			unset = true
+	refs := c.EnvRefs()
+	for _, name := range refs {
+		if isAgentEnv(name) {
+			return fmt.Errorf("environment variable %s is reserved for the agent's own settings", name)
 		}
 	}
-	// A variable that isn't set yet fails the check with a clear message
-	// rather than rejecting the monitor (or a whole monitors file); the URL is
-	// validated once it can be resolved.
-	if !unset {
-		if err := c.validateURL(); err != nil {
-			return err
+	// A variable that isn't set yet, or is set to something that isn't a
+	// URL, fails the check with a clear message rather than rejecting the
+	// monitor (or a whole monitors file): ResolvedTarget validates the URL
+	// once the variables are filled in.
+	if len(refs) == 0 {
+		if err := c.validateURL(c.Target); err != nil {
+			return fmt.Errorf("target must be %w", err)
 		}
 	}
 	if c.Type == TypeRedis {
@@ -146,11 +159,9 @@ func (c *Check) normalizeDatabase() error {
 	return nil
 }
 
-func (c *Check) validateURL() error {
-	target, err := c.ResolvedTarget()
-	if err != nil {
-		return err
-	}
+// validateURL checks a resolved target. Its error reads after "isn't" or
+// "must be", and never includes the target, which may hold a password.
+func (c *Check) validateURL(target string) error {
 	schemes := databaseSchemes[c.Type]
 	example := map[Type]string{ //nolint:gosec // G101: example URLs for the error message, not credentials
 		TypePostgres: "postgres://user:password@host:5432/db",
@@ -159,11 +170,11 @@ func (c *Check) validateURL() error {
 	}[c.Type]
 	u, err := url.Parse(target)
 	if err != nil || !slices.Contains(schemes, u.Scheme) || u.Hostname() == "" {
-		return fmt.Errorf("target must be a %s URL, e.g. %s", schemes[0], example)
+		return fmt.Errorf("a %s URL, e.g. %s", schemes[0], example)
 	}
 	if db := strings.Trim(u.Path, "/"); c.Type == TypeRedis && db != "" {
 		if n, err := strconv.Atoi(db); err != nil || n < 0 {
-			return fmt.Errorf("redis database %q must be a number", db)
+			return errors.New("a redis URL whose database is a number, e.g. " + example)
 		}
 	}
 	return nil

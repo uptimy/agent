@@ -51,15 +51,22 @@ func validate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		switch d.Kind {
 		case monitor.KindHealthcheck:
 			report.Healthchecks++
+			var envProblems []string
 			for _, v := range d.Check.EnvRefs() {
 				if _, ok := os.LookupEnv(v); !ok {
-					msg := fmt.Sprintf("%s: environment variable %s isn't set here; the agent needs it", d.Name, v)
-					if *strictEnv {
-						report.Errors = append(report.Errors, msg)
-					} else {
-						report.Warnings = append(report.Warnings, msg)
-					}
+					envProblems = append(envProblems, fmt.Sprintf("%s: environment variable %s isn't set here; the agent needs it", d.Name, v))
 				}
+			}
+			if len(envProblems) == 0 && len(d.Check.EnvRefs()) > 0 {
+				// Set, but maybe not to a URL: the agent would fail the check.
+				if _, err := d.Check.ResolvedTarget(); err != nil {
+					envProblems = append(envProblems, fmt.Sprintf("%s: %v", d.Name, err))
+				}
+			}
+			if *strictEnv {
+				report.Errors = append(report.Errors, envProblems...)
+			} else {
+				report.Warnings = append(report.Warnings, envProblems...)
 			}
 		case monitor.KindHeartbeat:
 			report.Heartbeats++

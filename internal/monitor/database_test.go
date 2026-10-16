@@ -17,7 +17,10 @@ func TestNormalizeDatabase(t *testing.T) {
 		// Unset variables fail the check, not the save (or a whole monitors file).
 		healthcheck("a", Check{Type: TypePostgres, Target: "${AGENT_TEST_UNSET_VAR}"}),
 		healthcheck("a", Check{Type: TypeRedis, Target: "redis://:${AGENT_TEST_UNSET_VAR}@cache:6379/0"}),
+		// So do variables set to something that isn't a URL (TestResolvedTargetInvalid).
+		healthcheck("a", Check{Type: TypePostgres, Target: "${AGENT_TEST_NOT_A_URL}"}),
 	}
+	t.Setenv("AGENT_TEST_NOT_A_URL", "db.internal:5432")
 	for _, m := range ok {
 		if err := m.Normalize(); err != nil {
 			t.Errorf("%s %s: %v", m.Check.Type, m.Check.Target, err)
@@ -88,5 +91,31 @@ func TestMaskPassword(t *testing.T) {
 	}
 	if !strings.Contains(Check{Type: TypeRedis, Target: "redis://:pw@c"}.DisplayTarget(), "••••••") {
 		t.Error("redis target not masked")
+	}
+}
+
+func TestResolvedTargetInvalid(t *testing.T) {
+	t.Setenv("PG_URL", "db.internal:5432 user=app password=hunter2")
+	t.Setenv("PG_PASSWORD", "hunter2")
+	t.Setenv("PG_HOST", "")
+	cases := map[string]string{
+		"${PG_URL}": "PG_URL isn't a postgres URL",
+		"postgres://app:${PG_PASSWORD}@${PG_HOST}/a": "the target with PG_PASSWORD, PG_HOST filled in isn't a postgres URL",
+	}
+	for in, want := range cases {
+		m := Check{Type: TypePostgres, Target: in}
+		got, err := m.ResolvedTarget()
+		if err == nil || !strings.HasPrefix(err.Error(), want) {
+			t.Errorf("%s: got %v, want %q", in, err, want)
+			continue
+		}
+		if got != "" || strings.Contains(err.Error(), "hunter2") || strings.Contains(err.Error(), "db.internal") {
+			t.Errorf("%s: the value leaked: %q, %v", in, got, err)
+		}
+	}
+	// A monitor using one is still valid, so it can be saved or loaded.
+	m := healthcheck("a", Check{Type: TypePostgres, Target: "${PG_URL}"})
+	if err := m.Normalize(); err != nil {
+		t.Errorf("normalize: %v", err)
 	}
 }
