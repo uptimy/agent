@@ -140,7 +140,7 @@ type Connection struct {
 	// often it uploads, how soon a status change may follow the last upload
 	// (the plan's check interval), and how often an unchanged result is sent.
 	// Empty LocationUUID means the sync hasn't set the connection up yet,
-	// e.g. one made before 0.3.
+	// e.g. one made before 0.2.0.
 	LocationUUID                string `json:"location_uuid,omitempty"`
 	UploadIntervalSeconds       int    `json:"upload_interval_seconds,omitempty"`
 	StatusChangeIntervalSeconds int    `json:"status_change_interval_seconds,omitempty"`
