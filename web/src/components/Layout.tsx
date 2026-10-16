@@ -323,15 +323,17 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-      <div className="min-w-0">
+    // Side by side from sm up, whatever the description's length: it wraps
+    // within its column instead of pushing the actions to a row of their own.
+    <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0 flex-1">
         <h1 className="flex items-center gap-3 text-2xl font-bold tracking-tight md:text-3xl">
           {Icon && <Icon className="size-6 shrink-0 md:size-7" />}
           {title}
         </h1>
-        {description && <div className="mt-2 text-sm text-muted-foreground md:text-base">{description}</div>}
+        {description && <div className="mt-2 max-w-2xl text-sm text-muted-foreground md:text-base">{description}</div>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>
   );
 }
