@@ -371,7 +371,17 @@ export interface Info {
   status_page_enabled: boolean;
   status_page_title: string;
   monitors_file: boolean;
+  /** What was wrong with the monitors file at startup; null when nothing. */
+  monitors_file_error: MonitorsFileProblem | null;
   retention_days: number;
+}
+
+/** A monitors file with problems: held back entirely, or applied without the monitors in errors. */
+export interface MonitorsFileProblem {
+  /** The file's name, or MONITORS_YAML. */
+  file: string;
+  applied: boolean;
+  errors: string[];
 }
 
 /** How Kubernetes discovery is doing: its last scan and what it couldn't use. */

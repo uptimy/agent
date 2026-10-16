@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -83,7 +84,8 @@ func run(log *slog.Logger) error {
 		log.Warn("created the default admin user; sign in and choose a new password",
 			"username", cfg.AdminUsername, "password", generated)
 	}
-	if err := syncMonitorsFile(ctx, cfg, st, log); err != nil {
+	monitorsFileProblem, err := syncMonitorsFile(ctx, cfg, st, log)
+	if err != nil {
 		return err
 	}
 
@@ -135,7 +137,7 @@ func run(log *slog.Logger) error {
 	srv := &api.Server{
 		Config: cfg, Version: version, Store: st, Scheduler: sched,
 		Sender: sender, Alerts: alerts, Hub: hub, Log: log, KubeAvailable: kc != nil, Discovery: disc,
-		Sync: syncer,
+		Sync: syncer, MonitorsFileProblem: monitorsFileProblem,
 	}
 	go srv.RunUptimyMaintenance(ctx)
 	ui, err := web.Handler(cfg.UIDevServer)
@@ -175,29 +177,44 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func syncMonitorsFile(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger) error {
+// syncMonitorsFile applies the monitors file, as far as it's valid (see
+// filesync.Apply). A file with problems never stops the agent: they're
+// logged and returned for the UI. Only a database error is fatal.
+func syncMonitorsFile(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger) (*filesync.Problem, error) {
 	var data []byte
+	var name string
 	switch {
 	case cfg.MonitorsYAML != "":
-		data = []byte(cfg.MonitorsYAML)
+		data, name = []byte(cfg.MonitorsYAML), "MONITORS_YAML"
 	case cfg.MonitorsFile != "":
+		name = filepath.Base(cfg.MonitorsFile)
 		var err error
 		if data, err = os.ReadFile(cfg.MonitorsFile); err != nil {
-			return fmt.Errorf("read monitors file: %w", err)
+			log.Error("can't read the monitors file; keeping the monitors it set before", "file", cfg.MonitorsFile, "err", err)
+			return &filesync.Problem{File: name, Errors: []string{err.Error()}}, nil
 		}
 	default:
-		return nil
+		return nil, nil
 	}
-	desired, err := filesync.Parse(data)
+	res, err := filesync.Apply(ctx, st, data)
 	if err != nil {
-		return fmt.Errorf("monitors file: %w", err)
+		return nil, fmt.Errorf("sync monitors file: %w", err)
 	}
-	created, updated, deleted, err := filesync.Sync(ctx, st, desired)
-	if err != nil {
-		return fmt.Errorf("sync monitors file: %w", err)
+	if len(res.Problems) == 0 {
+		log.Info("monitors file applied", "created", res.Created, "updated", res.Updated, "deleted", res.Deleted)
+		return nil, nil
 	}
-	log.Info("monitors file applied", "created", created, "updated", updated, "deleted", deleted)
-	return nil
+	p := &filesync.Problem{File: name, Applied: !res.Held}
+	for _, e := range res.Problems {
+		p.Errors = append(p.Errors, e.Error())
+	}
+	if res.Held {
+		log.Error("the monitors file has an error and wasn't applied; keeping the monitors it set before", "file", name, "err", errors.Join(res.Problems...))
+	} else {
+		log.Error("the monitors file has invalid monitors; they were skipped, the rest applied", "file", name,
+			"created", res.Created, "updated", res.Updated, "deleted", res.Deleted, "err", errors.Join(res.Problems...))
+	}
+	return p, nil
 }
 
 func prune(ctx context.Context, st *store.Store, days int, log *slog.Logger) {

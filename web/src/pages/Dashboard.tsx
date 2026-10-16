@@ -12,6 +12,7 @@ import { MonitorEmpty } from "@/components/MonitorEmpty";
 import { HealthcheckList } from "@/components/HealthcheckList";
 import { HeartbeatList } from "@/components/HeartbeatList";
 import { WatchTheWatcherNudge } from "@/components/WatchTheWatcher";
+import { MonitorsFileNotice } from "@/components/MonitorsFileNotice";
 import { useCanEdit } from "@/components/AuthGate";
 
 // How many of each kind the dashboard shows before "View all".
@@ -34,6 +35,7 @@ export function Dashboard() {
         description="See the health of your checks and scheduled jobs at a glance, then jump straight into the one that needs attention."
       />
       <ErrorNote error={healthcheckList.error ?? heartbeatList.error} />
+      <MonitorsFileNotice />
 
       {healthcheckList.isSuccess && heartbeatList.isSuccess && (
         <div className="flex flex-col gap-6">

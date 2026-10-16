@@ -16,6 +16,7 @@ import (
 	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/discovery"
 	"github.com/uptimy/agent/internal/events"
+	"github.com/uptimy/agent/internal/filesync"
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/notify"
 	"github.com/uptimy/agent/internal/scheduler"
@@ -37,6 +38,9 @@ type Server struct {
 	KubeAvailable bool
 	// Discovery is nil unless Kubernetes discovery runs.
 	Discovery *discovery.Discoverer
+	// MonitorsFileProblem is what was wrong with the monitors file at
+	// startup, or nil.
+	MonitorsFileProblem *filesync.Problem
 
 	limiter *loginLimiter
 	connect connectFlows
@@ -259,6 +263,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		"status_page_enabled": sp.Enabled,
 		"status_page_title":   sp.Title,
 		"monitors_file":       s.Config.MonitorsFile != "" || s.Config.MonitorsYAML != "",
+		"monitors_file_error": s.MonitorsFileProblem,
 		"retention_days":      s.Config.RetentionDays,
 	})
 }

@@ -9,6 +9,7 @@ import { ErrorNote, PageHeader } from "@/components/Layout";
 import { WatchTheWatcherCard } from "@/components/WatchTheWatcher";
 import { KumaImportCard } from "@/components/KumaImport";
 import { useCanEdit } from "@/components/AuthGate";
+import { MonitorsFileNotice } from "@/components/MonitorsFileNotice";
 
 export function Settings() {
   const info = useQuery({ queryKey: ["info"], queryFn: api.info });
@@ -19,6 +20,7 @@ export function Settings() {
     <>
       <PageHeader title="Settings" icon={SettingsIcon} description="Settings for this agent." />
       <ErrorNote error={info.error} />
+      <MonitorsFileNotice />
       {i && (
         <div className="flex flex-col gap-6">
           <WatchTheWatcherCard />
@@ -36,7 +38,18 @@ export function Settings() {
                   label="Kubernetes checks"
                   value={i.kubernetes ? "Available (running in cluster)" : "Unavailable (not in a cluster)"}
                 />
-                <Row label="Monitors file" value={i.monitors_file ? "Loaded" : "Not configured"} />
+                <Row
+                  label="Monitors file"
+                  value={
+                    !i.monitors_file
+                      ? "Not configured"
+                      : i.monitors_file_error
+                        ? i.monitors_file_error.applied
+                          ? "Loaded, some monitors skipped (see the notice above)"
+                          : "Not applied: it has an error (see the notice above)"
+                        : "Loaded"
+                  }
+                />
                 <Row label="Data retention" value={`${i.retention_days} days`} />
                 <Row
                   label="Status page"

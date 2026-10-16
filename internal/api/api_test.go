@@ -21,6 +21,7 @@ import (
 	"github.com/uptimy/agent/internal/connect"
 	"github.com/uptimy/agent/internal/delivery"
 	"github.com/uptimy/agent/internal/events"
+	"github.com/uptimy/agent/internal/filesync"
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/notify"
 	"github.com/uptimy/agent/internal/scheduler"
@@ -532,4 +533,18 @@ func createTCP(t *testing.T, st *store.Store, name, target, source string) monit
 		t.Fatal(err)
 	}
 	return m
+}
+
+func TestInfoMonitorsFileProblem(t *testing.T) {
+	c := newTestServer(t)
+	c.login("admin", adminPassword)
+	if _, body := c.do("GET", "/api/info", nil); body["monitors_file_error"] != nil {
+		t.Fatalf("no problem: %v", body["monitors_file_error"])
+	}
+	c.srv.MonitorsFileProblem = &filesync.Problem{File: "monitors.yaml", Errors: []string{"yaml: line 12: did not find expected key"}}
+	_, body := c.do("GET", "/api/info", nil)
+	p, _ := body["monitors_file_error"].(map[string]any)
+	if p["file"] != "monitors.yaml" || p["applied"] != false || p["errors"].([]any)[0] != "yaml: line 12: did not find expected key" {
+		t.Fatalf("problem: %v", body["monitors_file_error"])
+	}
 }

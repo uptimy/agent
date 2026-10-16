@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -71,29 +72,47 @@ func Parse(data []byte) ([]Desired, error) {
 // Check decodes and validates YAML like Parse, but reports every problem,
 // for `uptimy-agent validate`. The monitors are those without problems.
 func Check(data []byte) ([]Desired, []error) {
+	c := check(data)
+	return c.desired, c.problems
+}
+
+// checked is a decoded and validated file.
+type checked struct {
+	desired  []Desired
+	problems []error
+	// invalid are the names of the monitors with problems.
+	invalid []string
+	// whole: the problems are the file's, not single monitors': YAML that
+	// doesn't decode, or two monitors with one name.
+	whole bool
+}
+
+func check(data []byte) checked {
 	var f File
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true) // a misspelled setting is an error, not silently ignored
 	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
-		return nil, []error{err}
+		return checked{problems: []error{err}, whole: true}
 	}
-	var problems []error
-	out := make([]Desired, 0, len(f.Healthchecks)+len(f.Heartbeats))
+	var c checked
+	c.desired = make([]Desired, 0, len(f.Healthchecks)+len(f.Heartbeats))
 	for i, e := range f.Healthchecks {
 		m, err := e.monitor()
 		if err != nil {
-			problems = append(problems, fmt.Errorf("healthcheck %d (%s): %w", i+1, e.Name, err))
+			c.problems = append(c.problems, fmt.Errorf("healthcheck %d (%s): %w", i+1, e.Name, err))
+			c.invalid = append(c.invalid, strings.TrimSpace(e.Name))
 			continue
 		}
-		out = append(out, Desired{Monitor: m})
+		c.desired = append(c.desired, Desired{Monitor: m})
 	}
 	for i, e := range f.Heartbeats {
 		m, err := e.monitor()
 		if err != nil {
-			problems = append(problems, fmt.Errorf("heartbeat %d (%s): %w", i+1, e.Name, err))
+			c.problems = append(c.problems, fmt.Errorf("heartbeat %d (%s): %w", i+1, e.Name, err))
+			c.invalid = append(c.invalid, strings.TrimSpace(e.Name))
 			continue
 		}
-		out = append(out, Desired{Monitor: m, GeneratedToken: e.Token == ""})
+		c.desired = append(c.desired, Desired{Monitor: m, GeneratedToken: e.Token == ""})
 	}
 	seen := map[string]bool{}
 	names := make([]string, 0, len(f.Healthchecks)+len(f.Heartbeats))
@@ -105,11 +124,12 @@ func Check(data []byte) ([]Desired, []error) {
 	}
 	for _, name := range names {
 		if seen[name] && name != "" {
-			problems = append(problems, fmt.Errorf("two monitors are named %q; names must be unique", name))
+			c.problems = append(c.problems, fmt.Errorf("two monitors are named %q; names must be unique", name))
+			c.whole = true
 		}
 		seen[name] = true
 	}
-	return out, problems
+	return c
 }
 
 func (c common) monitor(kind monitor.Kind) monitor.Monitor {
@@ -163,4 +183,56 @@ func seconds(s string) (int, error) {
 func Sync(ctx context.Context, st *store.Store, desired []Desired) (created, updated, deleted int, err error) {
 	ch, err := managed.Sync(ctx, st, monitor.SourceFile, desired, managed.Options{})
 	return ch.Created, ch.Updated, len(ch.Deleted), err
+}
+
+// Result is what Apply did with a monitors file.
+type Result struct {
+	Created, Updated, Deleted int
+	// Held: the file as a whole couldn't be used, so nothing changed.
+	Held bool
+	// Problems are why it was held, or the monitors that were skipped.
+	Problems []error
+}
+
+// Apply validates a monitors file and syncs the file-managed monitors to as
+// much of it as is valid, so a mistake in the file never stops the agent:
+//
+//   - YAML that doesn't decode (a syntax error, a misspelled setting) or two
+//     monitors with one name: the whole file is held back and the monitors
+//     stay as the last good file left them.
+//   - A monitor with a problem is skipped: if the file had it before, it keeps
+//     its last good settings (and its history); if it's new, it isn't
+//     created. The other monitors are applied.
+//
+// The error is the store's.
+func Apply(ctx context.Context, st *store.Store, data []byte) (Result, error) {
+	c := check(data)
+	if c.whole {
+		return Result{Held: true, Problems: c.problems}, nil
+	}
+	desired := c.desired
+	if len(c.invalid) > 0 {
+		existing, err := st.ListMonitors(ctx)
+		if err != nil {
+			return Result{}, err
+		}
+		for _, m := range existing {
+			if m.Source == monitor.SourceFile && slices.Contains(c.invalid, m.Name) {
+				desired = append(desired, Desired{Monitor: m}) // unchanged
+			}
+		}
+	}
+	created, updated, deleted, err := Sync(ctx, st, desired)
+	return Result{Created: created, Updated: updated, Deleted: deleted, Problems: c.problems}, err
+}
+
+// Problem is what went wrong the last time the monitors file was applied,
+// for the UI.
+type Problem struct {
+	// File is the file's name, or MONITORS_YAML.
+	File string `json:"file"`
+	// Applied: the file's valid monitors were applied and Errors are the
+	// ones skipped. Otherwise the file was held back and nothing changed.
+	Applied bool     `json:"applied"`
+	Errors  []string `json:"errors"`
 }
