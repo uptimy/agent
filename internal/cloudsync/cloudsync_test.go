@@ -467,6 +467,32 @@ func TestDeletedMonitorsMirrorIsDeleted(t *testing.T) {
 	}
 }
 
+// Results have no AUTOINCREMENT: once the newest are deleted, SQLite hands
+// their rowids out again, and the cursor must not skip them.
+func TestResultsCursorFollowsReusedRowids(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	old := e.monitor(t, healthcheck("old", "http", "http://old.local/health"))
+	e.s.cycle(ctx)
+	for i := 0; i < 3; i++ {
+		_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: old.ID, Time: e.now.Add(time.Duration(i) * time.Second), OK: true})
+	}
+	e.s.cycle(ctx)
+	if r, _, _, _ := e.st.SyncCursors(ctx); r != 3 {
+		t.Fatalf("results cursor %d, want 3", r)
+	}
+	if err := e.st.DeleteMonitor(ctx, old.ID); err != nil { // its results go with it
+		t.Fatal(err)
+	}
+	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	e.s.cycle(ctx) // mirrors api; nothing to upload
+	_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: e.now.Add(time.Minute), OK: false})
+	e.s.cycle(ctx)
+	if last := e.cloud.uploads[len(e.cloud.uploads)-1]; len(last.Healthchecks) != 1 || last.Healthchecks[0].HealthcheckUUID != "uuid-hc-"+itoa(api.ID) {
+		t.Fatalf("last upload %+v, want api's result (rowid 1 again)", last)
+	}
+}
+
 func TestBackpressureAndPlanLimitKeepTheCursor(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

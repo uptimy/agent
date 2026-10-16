@@ -591,6 +591,14 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 		return l, ok
 	}
 
+	// Past the newest result (they were deleted, e.g. with their monitor),
+	// the cursor would skip the rowids SQLite hands out again.
+	maxRow, err := s.Store.MaxResultRowID(ctx)
+	if err != nil {
+		return false, err
+	}
+	resultsCursor = min(resultsCursor, maxRow)
+
 	rows, err := s.Store.ResultsAfter(ctx, resultsCursor, scanRows)
 	if err != nil {
 		return false, err

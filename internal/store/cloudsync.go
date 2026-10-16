@@ -113,6 +113,15 @@ func (s *Store) SyncStartCursors(ctx context.Context, since time.Time) (results,
 	return results, runs, err
 }
 
+// MaxResultRowID is the newest result's rowid, 0 without results. Rowids
+// are reused once the newest results are deleted (results has no
+// AUTOINCREMENT, unlike runs), so the upload cursor is kept at most this.
+func (s *Store) MaxResultRowID(ctx context.Context) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(rowid), 0) FROM results").Scan(&id)
+	return id, err
+}
+
 // ResultRow is a result with its position for the upload cursor.
 type ResultRow struct {
 	RowID int64
