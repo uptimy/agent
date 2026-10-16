@@ -17,10 +17,10 @@ import (
 const (
 	keySyncResultsCursor = "cloud_sync_results_cursor" // results.rowid
 	keySyncRunsCursor    = "cloud_sync_runs_cursor"    // runs.id
-	// Runs the runs cursor passed while they were running (JSON ids): each
-	// is uploaded once it has finished. A run that finishes is the same row,
-	// updated, so the cursor alone would never see it again.
-	keySyncRunsRunning = "cloud_sync_runs_running"
+	// Runs the runs cursor passed that weren't uploaded yet (JSON ids), e.g.
+	// still running: a run that finishes is the same row, updated, so the
+	// cursor alone would never see it again.
+	keySyncRunsPending = "cloud_sync_runs_pending"
 )
 
 // CloudMonitor is a monitor mirrored to Cloud.
@@ -81,7 +81,7 @@ func (s *Store) ResetCloudSync(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM cloud_monitors"); err != nil {
 			return err
 		}
-		for _, key := range []string{keySyncResultsCursor, keySyncRunsCursor, keySyncRunsRunning} {
+		for _, key := range []string{keySyncResultsCursor, keySyncRunsCursor, keySyncRunsPending} {
 			if err := deleteSetting(ctx, tx, key); err != nil {
 				return err
 			}
@@ -106,17 +106,17 @@ func (s *Store) SyncCursors(ctx context.Context) (results, runs int64, ok bool, 
 	return results, runs, true, nil
 }
 
-// SyncRunningRuns returns the runs at or before the runs cursor that were
-// still running when it passed them.
-func (s *Store) SyncRunningRuns(ctx context.Context) ([]int64, error) {
+// SyncPendingRuns returns the runs at or before the runs cursor that
+// weren't uploaded when it passed them.
+func (s *Store) SyncPendingRuns(ctx context.Context) ([]int64, error) {
 	var ids []int64
-	_, err := s.getJSON(ctx, keySyncRunsRunning, &ids)
+	_, err := s.getJSON(ctx, keySyncRunsPending, &ids)
 	return ids, err
 }
 
 // SetSyncCursors records an accepted upload: the cursors, and the runs
-// before the runs cursor still running.
-func (s *Store) SetSyncCursors(ctx context.Context, results, runs int64, running []int64) error {
+// before the runs cursor not uploaded yet.
+func (s *Store) SetSyncCursors(ctx context.Context, results, runs int64, pending []int64) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if err := setSetting(ctx, tx, keySyncResultsCursor, strconv.FormatInt(results, 10)); err != nil {
 			return err
@@ -124,10 +124,10 @@ func (s *Store) SetSyncCursors(ctx context.Context, results, runs int64, running
 		if err := setSetting(ctx, tx, keySyncRunsCursor, strconv.FormatInt(runs, 10)); err != nil {
 			return err
 		}
-		if running == nil {
-			running = []int64{}
+		if pending == nil {
+			pending = []int64{}
 		}
-		return setJSON(ctx, tx, keySyncRunsRunning, running)
+		return setJSON(ctx, tx, keySyncRunsPending, pending)
 	})
 }
 
@@ -195,7 +195,7 @@ func (s *Store) ResultsAfter(ctx context.Context, rowid int64, limit int) ([]Res
 const syncRunColumns = "id, monitor_id, due_at, started_at, finished_at, outcome, on_time, duration_ms, message, ts"
 
 // RunsAfter returns up to limit runs after id, in id order, the ones still
-// running included (the caller keeps them in SetSyncCursors' running).
+// running included (the caller keeps them in SetSyncCursors' pending).
 func (s *Store) RunsAfter(ctx context.Context, id int64, limit int) ([]monitor.Run, error) {
 	return s.syncRuns(ctx, "SELECT "+syncRunColumns+" FROM runs WHERE id > ? ORDER BY id LIMIT ?", id, limit)
 }

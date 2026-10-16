@@ -31,6 +31,10 @@ type fakeCloud struct {
 	sample       int
 	locationPuts int
 	hcPuts       int
+	hbPuts       int
+	// failNext answers the next request whose "METHOD path prefix" matches
+	// with this status (and an error), once.
+	failNext     map[string]int
 	healthchecks map[string]connect.MirroredHealthcheck // clientRef -> last PUT
 	heartbeats   map[string]map[string]any              // uuid -> body
 	deleted      []string
@@ -40,7 +44,7 @@ type fakeCloud struct {
 }
 
 func newFakeCloud(t *testing.T) *fakeCloud {
-	f := &fakeCloud{interval: 60, statusChange: 10, sample: 300, healthchecks: map[string]connect.MirroredHealthcheck{}, heartbeats: map[string]map[string]any{}}
+	f := &fakeCloud{interval: 60, statusChange: 10, sample: 300, healthchecks: map[string]connect.MirroredHealthcheck{}, heartbeats: map[string]map[string]any{}, failNext: map[string]int{}}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.Close)
 	return f
@@ -62,6 +66,14 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
 	_ = json.Unmarshal(raw, &body)
 	path := r.URL.Path
+	for prefix, status := range f.failNext {
+		if strings.HasPrefix(r.Method+" "+path, prefix) {
+			delete(f.failNext, prefix)
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"error":"failed on purpose"}`))
+			return
+		}
+	}
 	switch {
 	case r.Method == http.MethodPut && path == "/v1/api/agent/location":
 		f.locationPuts++
@@ -111,6 +123,7 @@ func (f *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 		case http.MethodGet:
 			reply(http.StatusOK, b)
 		case http.MethodPut:
+			f.hbPuts++
 			for k, v := range body {
 				b[k] = v
 			}
@@ -598,6 +611,90 @@ func TestLostLocationKeepsTheCursors(t *testing.T) {
 	}
 	if last := e.lastUpload(); len(last.Healthchecks) != 0 {
 		t.Fatalf("uploaded %+v again", last.Healthchecks)
+	}
+}
+
+// A failed update keeps the mirror as Cloud has it: its results still
+// upload, and the next cycle sends the update again.
+func TestFailedMirrorUpdateKeepsTheMirror(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	e.s.cycle(ctx)
+	before, _ := e.st.CloudMonitors(ctx)
+
+	api.Check.Target = "http://api.local/healthz"
+	if _, err := e.st.UpdateMonitor(ctx, api); err != nil {
+		t.Fatal(err)
+	}
+	_ = e.st.InsertResult(ctx, monitor.Result{MonitorID: api.ID, Time: e.now, OK: true})
+	e.cloud.failNext["PUT /v1/api/agent/healthchecks/"] = http.StatusInternalServerError
+	e.s.cycle(ctx)
+	if after, _ := e.st.CloudMonitors(ctx); after[api.ID] != before[api.ID] {
+		t.Fatalf("mirror %+v after a failed update, want %+v kept", after[api.ID], before[api.ID])
+	}
+	if got := e.lastUpload().Healthchecks; len(got) != 1 || got[0].HealthcheckUUID != before[api.ID].CloudUUID {
+		t.Fatalf("uploaded %+v, want the result under the kept mirror", got)
+	}
+	e.s.cycle(ctx)
+	if h := e.cloud.healthchecks["hc-"+itoa(api.ID)]; h.Target != "http://api.local/healthz" {
+		t.Fatalf("mirror %+v, want the update sent again", h)
+	}
+}
+
+// A heartbeat whose mirror couldn't be created yet keeps its runs: they
+// upload once it is, so Cloud learns its status.
+func TestRunsWaitForTheirMirror(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.s.cycle(ctx)
+	backup := e.monitor(t, monitor.Monitor{Kind: monitor.KindHeartbeat, Name: "backup", Heartbeat: &monitor.Heartbeat{Token: "tok-backup-0123456789", EverySeconds: 3600}})
+	if _, err := e.st.InsertRun(ctx, monitor.Run{MonitorID: backup.ID, DueAt: &e.now, Outcome: monitor.OutcomeMissed}); err != nil {
+		t.Fatal(err)
+	}
+	e.cloud.failNext["POST /v1/api/heartbeat-monitors/"] = http.StatusInternalServerError
+	e.s.cycle(ctx)
+	if got := e.lastUpload().Heartbeats; len(got) != 0 {
+		t.Fatalf("uploaded %+v without a mirror", got)
+	}
+	e.s.cycle(ctx)
+	if got := e.lastUpload().Heartbeats; len(got) != 1 || got[0].Outcome != "missed" || got[0].HeartbeatUUID != e.mirror(t, backup.ID) {
+		t.Fatalf("uploaded %+v, want the missed run once mirrored", got)
+	}
+}
+
+// The full reconcile sends nothing that's unchanged and still in Cloud (an
+// update resets a heartbeat's state there), re-creates what Cloud lost, and
+// deletes what this agent doesn't know.
+func TestFullReconcileSendsOnlyWhatsMissing(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	api := e.monitor(t, healthcheck("api", "http", "http://api.local/health"))
+	backup := e.monitor(t, monitor.Monitor{Kind: monitor.KindHeartbeat, Name: "backup", Heartbeat: &monitor.Heartbeat{Token: "tok-backup-0123456789", EverySeconds: 3600}})
+	e.s.cycle(ctx)
+	hcPuts, hbPuts := e.cloud.hcPuts, e.cloud.hbPuts
+
+	e.now = e.now.Add(fullReconcileEvery)
+	e.s.cycle(ctx)
+	if e.cloud.hcPuts != hcPuts || e.cloud.hbPuts != hbPuts {
+		t.Fatalf("full reconcile sent %d healthchecks and %d heartbeats again, want none", e.cloud.hcPuts-hcPuts, e.cloud.hbPuts-hbPuts)
+	}
+
+	e.cloud.mu.Lock()
+	delete(e.cloud.healthchecks, "hc-"+itoa(api.ID))
+	delete(e.cloud.heartbeats, e.mirror(t, backup.ID))
+	e.cloud.heartbeats["hb-stray"] = map[string]any{"clientRef": "stray", "source": "agent"}
+	e.cloud.mu.Unlock()
+	e.now = e.now.Add(fullReconcileEvery)
+	e.s.cycle(ctx)
+	if _, ok := e.cloud.healthchecks["hc-"+itoa(api.ID)]; !ok {
+		t.Fatal("the healthcheck Cloud lost wasn't sent again")
+	}
+	if _, ok := e.cloud.heartbeats[e.mirror(t, backup.ID)]; !ok {
+		t.Fatal("the heartbeat Cloud lost wasn't created again")
+	}
+	if _, ok := e.cloud.heartbeats["hb-stray"]; ok {
+		t.Fatal("a stray mirror wasn't deleted")
 	}
 }
 

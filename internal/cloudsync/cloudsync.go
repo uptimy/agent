@@ -393,11 +393,11 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 	} else if !ok {
 		// Start now: history from before connecting would open incidents in
 		// Cloud that are long over.
-		r, n, running, err := s.Store.SyncStartCursors(ctx)
+		r, n, pending, err := s.Store.SyncStartCursors(ctx)
 		if err != nil {
 			return err
 		}
-		if err := s.Store.SetSyncCursors(ctx, r, n, running); err != nil {
+		if err := s.Store.SetSyncCursors(ctx, r, n, pending); err != nil {
 			return err
 		}
 	}
@@ -410,7 +410,10 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 }
 
 // reconcile pushes changed monitors to Cloud and deletes mirrors of deleted
-// ones. full also compares with Cloud's own lists and resends everything.
+// ones. full also compares with Cloud's own lists: it sends a mirror Cloud
+// no longer has, and deletes ones this agent doesn't know. A mirror that's
+// unchanged and still in Cloud isn't sent again: a heartbeat's update
+// resets its state in Cloud.
 func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *connect.Connection, full bool) error {
 	installID, err := s.Store.InstallID(ctx)
 	if err != nil {
@@ -424,15 +427,35 @@ func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *co
 	if err != nil {
 		return err
 	}
+	var hcs []connect.HealthcheckRef
+	var hbs []connect.HeartbeatRef
+	inCloud := map[string]bool{} // healthchecks' clientRefs, heartbeats' uuids
+	if full {
+		if hcs, err = client.ListHealthchecks(ctx, conn.APIKey); err != nil {
+			return err
+		}
+		if hbs, err = client.ListAgentHeartbeats(ctx, conn.APIKey); err != nil {
+			return err
+		}
+		for _, h := range hcs {
+			inCloud[h.ClientRef] = true
+		}
+		for _, h := range hbs {
+			inCloud[h.UUID] = true
+		}
+	}
 
 	present := map[int64]bool{}
 	for _, m := range monitors {
 		present[m.ID] = true
 		c, mirrored := cloud[m.ID]
 		hash := definitionHash(m)
-		if mirrored && c.Hash == hash && !full {
+		missing := full && mirrored && !inCloud[c.ClientRef] && !inCloud[c.CloudUUID]
+		if mirrored && c.Hash == hash && !missing {
 			continue
 		}
+		// On an error the mirror keeps what Cloud had (its uuid and hash), and
+		// the next cycle tries again.
 		switch m.Kind {
 		case monitor.KindHealthcheck:
 			ref := healthcheckRef(m.ID)
@@ -441,10 +464,8 @@ func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *co
 				if isFatal(err) {
 					return err
 				}
-				// e.g. a type Cloud can't mirror yet: remember it so it isn't
-				// sent every cycle; it uploads nothing.
 				s.Log.Warn("cloud sync: mirroring a healthcheck", "monitor", m.Name, "err", err)
-				out.HealthcheckUUID = ""
+				continue
 			}
 			if err := s.Store.SaveCloudMonitor(ctx, store.CloudMonitor{MonitorID: m.ID, Kind: m.Kind, ClientRef: ref, CloudUUID: out.HealthcheckUUID, Hash: hash}); err != nil {
 				return err
@@ -452,6 +473,9 @@ func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *co
 		case monitor.KindHeartbeat:
 			ref := heartbeatRef(installID, m.ID)
 			uuid := c.CloudUUID
+			if missing {
+				uuid = "" // deleted in Cloud: create it again
+			}
 			mh := mirroredHeartbeat(m)
 			if uuid != "" {
 				err := client.PutAgentHeartbeat(ctx, conn.APIKey, uuid, mh)
@@ -505,15 +529,14 @@ func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *co
 		}
 	}
 
-	if full {
-		if err := s.deleteStrays(ctx, client, conn); err != nil {
-			return err
-		}
-	}
-
 	cloud, err = s.Store.CloudMonitors(ctx)
 	if err != nil {
 		return err
+	}
+	if full {
+		if err := s.deleteStrays(ctx, client, conn, cloud, hcs, hbs); err != nil {
+			return err
+		}
 	}
 	hc, hb := 0, 0
 	for _, c := range cloud {
@@ -530,21 +553,13 @@ func (s *Syncer) reconcile(ctx context.Context, client *connect.Client, conn *co
 	return nil
 }
 
-// deleteStrays removes mirrors in Cloud that this agent no longer knows,
-// e.g. after its database was reset.
-func (s *Syncer) deleteStrays(ctx context.Context, client *connect.Client, conn *connect.Connection) error {
-	cloud, err := s.Store.CloudMonitors(ctx)
-	if err != nil {
-		return err
-	}
+// deleteStrays removes mirrors in Cloud (as listed before this reconcile)
+// that this agent no longer knows, e.g. after its database was reset.
+func (s *Syncer) deleteStrays(ctx context.Context, client *connect.Client, conn *connect.Connection, cloud map[int64]store.CloudMonitor, hcs []connect.HealthcheckRef, hbs []connect.HeartbeatRef) error {
 	known := map[string]bool{}
 	for _, c := range cloud {
 		known[c.ClientRef] = true
 		known[c.CloudUUID] = true
-	}
-	hcs, err := client.ListHealthchecks(ctx, conn.APIKey)
-	if err != nil {
-		return err
 	}
 	for _, h := range hcs {
 		if !known[h.ClientRef] {
@@ -552,10 +567,6 @@ func (s *Syncer) deleteStrays(ctx context.Context, client *connect.Client, conn 
 				return err
 			}
 		}
-	}
-	hbs, err := client.ListAgentHeartbeats(ctx, conn.APIKey)
-	if err != nil {
-		return err
 	}
 	for _, h := range hbs {
 		if h.Source == connect.SourceAgent && !known[h.UUID] {
@@ -619,6 +630,9 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 			break
 		}
 		newResults = r.RowID
+		// A healthcheck not mirrored yet (a failed create) misses these
+		// results; once it is, each result it sends carries its status and
+		// since when, so Cloud still learns of a status change.
 		c, mirrored := cloud[r.MonitorID]
 		if !mirrored || c.CloudUUID == "" || c.Kind != monitor.KindHealthcheck || now.Sub(r.Time) > maxAge {
 			continue
@@ -647,52 +661,61 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 		pending[r.MonitorID] = sent{at: r.Time, status: status}
 	}
 
-	// Runs: first those the cursor passed while they were running and that
-	// have finished since (a few at most, so always taken), then
-	// the runs after the cursor. A run still running is remembered, not
-	// waited for, so it holds up no other run.
+	// Runs: first those the cursor passed but couldn't send yet, then the
+	// runs after the cursor. A run not sent yet is remembered (pending), not
+	// waited for, so it holds up no other run: one still running (it's sent
+	// once it finishes: the same row, updated), and one of a heartbeat not
+	// mirrored yet (a failed create), so its status change still reaches
+	// Cloud once it is. Runs older than Cloud takes are dropped.
 	newRuns := runsCursor
-	runningIDs, err := s.Store.SyncRunningRuns(ctx)
+	pendingIDs, err := s.Store.SyncPendingRuns(ctx)
 	if err != nil {
 		return false, err
 	}
-	earlier, err := s.Store.RunsByID(ctx, runningIDs)
+	earlier, err := s.Store.RunsByID(ctx, pendingIDs) // gone ones (deleted with their heartbeat) are dropped
 	if err != nil {
 		return false, err
 	}
 	var runs []monitor.Run
-	var running []int64 // gone ones (deleted with their heartbeat) are dropped
-	finishedIDs := ""   // for the batch id
-	for _, run := range earlier {
-		if run.Outcome == monitor.OutcomeRunning {
-			running = append(running, run.ID)
-		} else {
+	var pendingRuns []int64
+	earlierIDs := "" // the earlier runs sent, for the batch id
+	room := maxItems - len(up.Healthchecks)
+	// take reports whether run is sent in this batch, and keeps it pending if
+	// it can't be yet.
+	take := func(run monitor.Run) bool {
+		c := cloud[run.MonitorID]
+		switch {
+		case run.Outcome == monitor.OutcomeRunning || (c.CloudUUID == "" && now.Sub(*run.FinishedAt) <= maxAge):
+			pendingRuns = append(pendingRuns, run.ID)
+		case c.CloudUUID == "" || c.Kind != monitor.KindHeartbeat || now.Sub(*run.FinishedAt) > maxAge:
+		case len(runs) >= room:
+			pendingRuns, more = append(pendingRuns, run.ID), true
+		default:
 			runs = append(runs, run)
-			finishedIDs += "|" + strconv.FormatInt(run.ID, 10)
+			return true
+		}
+		return false
+	}
+	for _, run := range earlier {
+		if take(run) {
+			earlierIDs += "|" + strconv.FormatInt(run.ID, 10)
 		}
 	}
-	if room := maxItems - len(up.Healthchecks) - len(runs); room > 0 {
-		after, err := s.Store.RunsAfter(ctx, runsCursor, room)
+	if left := room - len(runs); left > 0 {
+		after, err := s.Store.RunsAfter(ctx, runsCursor, left)
 		if err != nil {
 			return false, err
 		}
-		more = more || len(after) == room
+		more = more || len(after) == left
 		for _, run := range after {
 			newRuns = run.ID
-			if run.Outcome == monitor.OutcomeRunning {
-				running = append(running, run.ID)
-			} else {
-				runs = append(runs, run)
-			}
+			take(run)
 		}
 	} else {
 		more = true
 	}
 	for _, run := range runs {
-		c, mirrored := cloud[run.MonitorID]
-		if !mirrored || c.CloudUUID == "" || c.Kind != monitor.KindHeartbeat || now.Sub(*run.FinishedAt) > maxAge {
-			continue
-		}
+		c := cloud[run.MonitorID]
 		status, _, _, err := s.Store.StatusAt(ctx, run.MonitorID, run.FinishedAt.Add(statusSlack))
 		if err != nil {
 			return false, err
@@ -714,7 +737,7 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	// recognized and nothing is stored twice. An empty batch only checks the
 	// agent in: it gets an id of its own, or every idle upload would look
 	// like a repeat of the first.
-	sum := sha256.Sum256([]byte(installID + "|" + strconv.FormatInt(resultsCursor, 10) + "|" + strconv.FormatInt(runsCursor, 10) + "|" + strconv.FormatInt(newResults, 10) + "|" + strconv.FormatInt(newRuns, 10) + finishedIDs))
+	sum := sha256.Sum256([]byte(installID + "|" + strconv.FormatInt(resultsCursor, 10) + "|" + strconv.FormatInt(runsCursor, 10) + "|" + strconv.FormatInt(newResults, 10) + "|" + strconv.FormatInt(newRuns, 10) + earlierIDs))
 	if len(up.Healthchecks)+len(up.Heartbeats) == 0 {
 		_, _ = rand.Read(sum[:16]) // never fails (crypto/rand panics instead)
 	}
@@ -724,7 +747,7 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	if err != nil {
 		return false, err
 	}
-	if err := s.Store.SetSyncCursors(ctx, newResults, newRuns, running); err != nil {
+	if err := s.Store.SetSyncCursors(ctx, newResults, newRuns, pendingRuns); err != nil {
 		return false, err
 	}
 	at := s.now().UTC()
