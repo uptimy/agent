@@ -112,7 +112,7 @@ func TestReadInProject(t *testing.T) {
 	// No domain, so no port, and no private endpoint: the name is used.
 	worker := byName["Queue Worker"]
 	if worker.Address != "private" || worker.Port != 0 || worker.Monitor.Check.Target != "" || worker.Path != "/" ||
-		worker.PrivateHost != "queue-worker.railway.internal" || len(worker.Notes) != 2 {
+		worker.PrivateHost != "queue-worker.railway.internal" || len(worker.Notes) != 1 {
 		t.Fatalf("worker: %+v", worker)
 	}
 	backup := byName["Nightly backup"].Monitor
@@ -153,7 +153,7 @@ func TestPrivateHosts(t *testing.T) {
 	if h := byName["API"].PrivateHost; h != "backend.railway.internal" {
 		t.Fatalf("api host %q", h)
 	}
-	if w := byName["Queue Worker"]; w.PrivateHost != "jobs.railway.internal" || len(w.Notes) != 1 {
+	if w := byName["Queue Worker"]; w.PrivateHost != "jobs.railway.internal" || len(w.Notes) != 0 {
 		t.Fatalf("worker: %+v", w)
 	}
 	_, byName, _ = plan(t, nil, inProject)

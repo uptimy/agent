@@ -247,7 +247,9 @@ function AddressToggle({
           onClick={() => onChange(v)}
           className={cn(
             "rounded px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50",
-            value === v ? "bg-card shadow-xs" : "text-muted-foreground",
+            value === v
+              ? "bg-primary text-primary-foreground shadow-xs"
+              : "text-muted-foreground hover:text-foreground",
           )}
         >
           {label}

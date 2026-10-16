@@ -219,10 +219,7 @@ func httpCheck(in instance, sameProject bool, privateHost string) (Service, stri
 			svc.PrivateHost = guessHost(in.ServiceName)
 			svc.Notes = append(svc.Notes, "private address guessed from the name; check it in the service's Networking settings")
 		}
-		svc.Address = "private"
-		if svc.Port == 0 {
-			svc.Notes = append(svc.Notes, "enter the port it listens on")
-		}
+		svc.Address = "private" // without a port, the review asks for one
 	} else {
 		if svc.PublicHost == "" {
 			return svc, "no public domain; deploy the agent in this project to check it privately"
