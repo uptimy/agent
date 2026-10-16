@@ -73,7 +73,7 @@ func TestMaskPassword(t *testing.T) {
 		"postgres://app@db/app":                  "postgres://app@db/app",
 		"postgres://db/app?password=x":           "postgres://db/app?password=x",
 		"${DATABASE_URL}":                        "${DATABASE_URL}",
-		"postgres://app:${PG_PASSWORD}@db/app":   "postgres://app:••••••@db/app",
+		"postgres://app:${PG_PASSWORD}@db/app":   "postgres://app:${PG_PASSWORD}@db/app",
 		"postgres://db/app?options=a@b:c":        "postgres://db/app?options=a@b:c",
 		"redis://cache:6379":                     "redis://cache:6379",
 		"not a url with user:pass@host":          "not a url with user:pass@host",
@@ -84,13 +84,39 @@ func TestMaskPassword(t *testing.T) {
 			t.Errorf("%s: got %q, want %q", in, got, want)
 		}
 	}
-	// Non-database targets are shown as is.
-	m := Check{Type: TypeHTTP, Target: "https://u:p@x"}
-	if m.DisplayTarget() != m.Target {
-		t.Error("http target masked")
-	}
 	if !strings.Contains(Check{Type: TypeRedis, Target: "redis://:pw@c"}.DisplayTarget(), "••••••") {
 		t.Error("redis target not masked")
+	}
+}
+
+func TestDisplayTarget(t *testing.T) {
+	cases := []struct {
+		typ      Type
+		in, want string
+	}{
+		// Passwords in any URL.
+		{TypeHTTP, "https://user:pass@example.com/health", "https://user:••••••@example.com/health"},
+		{TypeHTTP, "http://user@example.com", "http://user@example.com"},
+		{TypePostgres, "postgres://app:s3cret@db/app", "postgres://app:••••••@db/app"},
+		// Secret query parameters, case-insensitive, in any URL.
+		{TypeHTTP, "https://x/h?token=abc&env=prod", "https://x/h?token=••••••&env=prod"},
+		{TypeHTTP, "https://x/h?API_KEY=abc&Access-Token=d&sig=e#top", "https://x/h?API_KEY=••••••&Access-Token=••••••&sig=••••••#top"},
+		{TypeHTTP, "https://x/h?apikey=a&key=b&secret=c&signature=d&auth=e&client_secret=f&pass=g&pwd=h", "https://x/h?apikey=••••••&key=••••••&secret=••••••&signature=••••••&auth=••••••&client_secret=••••••&pass=••••••&pwd=••••••"},
+		{TypeHTTP, "https://x/h?monkey=1&keys=2&token=", "https://x/h?monkey=1&keys=2&token="},
+		{TypePostgres, "postgres://db/app?sslmode=require&password=x", "postgres://db/app?sslmode=require&password=••••••"},
+		{TypeMySQL, "mysql://root:pw@db/shop?Password=x", "mysql://root:••••••@db/shop?Password=••••••"},
+		// ${VAR} references are shown as written.
+		{TypePostgres, "${DATABASE_URL}", "${DATABASE_URL}"},
+		{TypePostgres, "postgres://db/app?password=${PG_PASSWORD}", "postgres://db/app?password=${PG_PASSWORD}"},
+		{TypeRedis, "redis://:${REDIS_PASSWORD}@cache:6379", "redis://:${REDIS_PASSWORD}@cache:6379"},
+		// Targets that aren't URLs.
+		{TypeTCP, "db:5432", "db:5432"},
+		{TypeDNS, "example.com", "example.com"},
+	}
+	for _, c := range cases {
+		if got := (Check{Type: c.typ, Target: c.in}).DisplayTarget(); got != c.want {
+			t.Errorf("%s %s: got %q, want %q", c.typ, c.in, got, c.want)
+		}
 	}
 }
 

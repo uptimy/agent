@@ -95,17 +95,27 @@ func (c Check) ResolvedTarget() (string, error) {
 	return out, nil
 }
 
-// DisplayTarget is the target with any password masked, for the UI list,
-// viewers and alert messages. ${VAR} references are shown as written.
+// DisplayTarget is the target with its secrets masked, for the UI list,
+// viewers, alert messages and Uptimy Cloud: the password in a URL and the
+// values of query parameters such as token or api_key (see MaskSecrets).
+// ${VAR} references are shown as written.
 func (c Check) DisplayTarget() string {
-	if !c.Type.IsDatabase() {
-		return c.Target
-	}
-	return MaskPassword(c.Target)
+	return MaskSecrets(c.Target)
+}
+
+// mask replaces a secret in a displayed target.
+const mask = "••••••"
+
+// MaskSecrets masks the password in scheme://user:password@host/... and the
+// values of query parameters that look secret (secretParam), in any
+// URL-shaped target. Targets without a scheme are returned as they are.
+func MaskSecrets(target string) string {
+	return maskQuery(MaskPassword(target))
 }
 
 // MaskPassword hides the password in scheme://user:password@host/... . It
 // works on the raw string so it also masks targets that don't parse as URLs.
+// A password that is a ${VAR} reference isn't a secret and is kept.
 func MaskPassword(target string) string {
 	_, rest, ok := strings.Cut(target, "://")
 	if !ok {
@@ -121,10 +131,55 @@ func MaskPassword(target string) string {
 		return target
 	}
 	colon := strings.Index(authority[:at], ":")
-	if colon < 0 || colon == at-1 {
+	if colon < 0 || colon == at-1 || isEnvRef(authority[colon+1:at]) {
 		return target
 	}
-	return target[:start+colon+1] + "••••••" + target[start+at:]
+	return target[:start+colon+1] + mask + target[start+at:]
+}
+
+// secretParams are query parameter names, lowercased without - and _, whose
+// values are masked: ?password=, ?access_token=, ?api-key=, ?sig= and so on.
+var secretParams = []string{
+	"password", "pass", "pwd", "token", "accesstoken", "apikey", "key",
+	"secret", "signature", "sig", "auth", "clientsecret",
+}
+
+func secretParam(name string) bool {
+	if n, err := url.QueryUnescape(name); err == nil {
+		name = n
+	}
+	name = strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(name))
+	return slices.Contains(secretParams, name)
+}
+
+// maskQuery masks the values of secret query parameters in a URL-shaped
+// target, keeping everything else (order, encoding, the fragment) as written.
+func maskQuery(target string) string {
+	if !strings.Contains(target, "://") {
+		return target
+	}
+	q := strings.Index(target, "?")
+	if q < 0 {
+		return target
+	}
+	query, fragment := target[q+1:], ""
+	if i := strings.Index(query, "#"); i >= 0 {
+		query, fragment = query[:i], query[i:]
+	}
+	params := strings.Split(query, "&")
+	for i, p := range params {
+		name, value, ok := strings.Cut(p, "=")
+		if ok && value != "" && !isEnvRef(value) && secretParam(name) {
+			params[i] = name + "=" + mask
+		}
+	}
+	return target[:q+1] + strings.Join(params, "&") + fragment
+}
+
+// isEnvRef reports whether s is exactly one ${VAR} reference.
+func isEnvRef(s string) bool {
+	m := envRef.FindStringIndex(s)
+	return m != nil && m[0] == 0 && m[1] == len(s)
 }
 
 // normalizeDatabase validates a database monitor's connection URL.

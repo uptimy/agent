@@ -978,7 +978,8 @@ func mirroredHealthcheck(m monitor.Monitor) connect.MirroredHealthcheck {
 	}
 	return connect.MirroredHealthcheck{
 		Name: m.Name, Type: string(c.Type),
-		// Passwords never leave the agent; ${VAR} references stay references.
+		// Passwords and secret query parameters are masked; ${VAR}
+		// references stay references.
 		Target: c.DisplayTarget(),
 		// Cloud only shows these; it takes them within its limits.
 		IntervalSeconds: min(max(c.IntervalSeconds, 1), maxCloudInterval),
