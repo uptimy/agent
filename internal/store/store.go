@@ -303,6 +303,14 @@ var migrations = []string{
 	// connect, http_5xx, http_4xx, assertion, other; '' when it was up).
 	`ALTER TABLE results ADD COLUMN status_code INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE results ADD COLUMN error_class TEXT NOT NULL DEFAULT '';`,
+
+	// 9: runs change after they're recorded (a late finish turns a missed
+	// run into a success; a start finishes or is abandoned), so the Cloud
+	// sync follows seq, which every insert and update raises, not id.
+	// Starting from id keeps an upload cursor taken from ids valid.
+	`ALTER TABLE runs ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+	UPDATE runs SET seq = id;
+	CREATE INDEX runs_seq ON runs(seq);`,
 }
 
 // migrationNotes, by migration number, say what a migration is about to

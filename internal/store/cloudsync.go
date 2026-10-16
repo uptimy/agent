@@ -141,28 +141,23 @@ func (s *Store) SetSyncCursors(ctx context.Context, results, runs int64, pending
 }
 
 // SyncStartCursors are where a new connection starts uploading: after the
-// newest result and run, with the runs still running, which finish after
-// connecting.
-func (s *Store) SyncStartCursors(ctx context.Context) (results, runs int64, running []int64, err error) {
+// newest result and the newest change to a run. A run still running gets a
+// newer seq when it finishes, so it's uploaded then.
+func (s *Store) SyncStartCursors(ctx context.Context) (results, runs int64, err error) {
 	if results, err = s.MaxResultRowID(ctx); err != nil {
-		return 0, 0, nil, err
+		return 0, 0, err
 	}
-	if err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(id), 0) FROM runs").Scan(&runs); err != nil {
-		return 0, 0, nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, "SELECT id FROM runs WHERE outcome = ? ORDER BY id", monitor.OutcomeRunning)
-	if err != nil {
-		return 0, 0, nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return 0, 0, nil, err
-		}
-		running = append(running, id)
-	}
-	return results, runs, running, rows.Err()
+	runs, err = s.MaxRunSeq(ctx)
+	return results, runs, err
+}
+
+// MaxRunSeq is the newest change to a run (migration 9), 0 without runs. A
+// seq can come back once the newest runs are deleted, so the upload cursor
+// is kept at most this.
+func (s *Store) MaxRunSeq(ctx context.Context) (int64, error) {
+	var seq int64
+	err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq), 0) FROM runs").Scan(&seq)
+	return seq, err
 }
 
 // MaxResultRowID is the newest result's rowid, 0 without results. Rowids
@@ -201,16 +196,23 @@ func (s *Store) ResultsAfter(ctx context.Context, rowid int64, limit int) ([]Res
 	return out, rows.Err()
 }
 
-const syncRunColumns = "id, monitor_id, due_at, started_at, finished_at, outcome, on_time, duration_ms, message, ts"
+const syncRunColumns = "id, monitor_id, due_at, started_at, finished_at, outcome, on_time, duration_ms, message, ts, seq"
 
-// RunsAfter returns up to limit runs after id, in id order, the ones still
-// running included (the caller keeps them in SetSyncCursors' pending).
-func (s *Store) RunsAfter(ctx context.Context, id int64, limit int) ([]monitor.Run, error) {
-	return s.syncRuns(ctx, "SELECT "+syncRunColumns+" FROM runs WHERE id > ? ORDER BY id LIMIT ?", id, limit)
+// RunsChangedAfter returns up to limit runs written (inserted or updated)
+// after seq, in the order they were written, the ones still running
+// included: a run is the same row from its start to its finish.
+func (s *Store) RunsChangedAfter(ctx context.Context, seq int64, limit int) ([]SyncRun, error) {
+	return s.syncRuns(ctx, "SELECT "+syncRunColumns+" FROM runs WHERE seq > ? ORDER BY seq LIMIT ?", seq, limit)
+}
+
+// SyncRun is a run with its position for the upload cursor.
+type SyncRun struct {
+	Seq int64
+	monitor.Run
 }
 
 // RunsByID returns the runs with these ids that still exist, in id order.
-func (s *Store) RunsByID(ctx context.Context, ids []int64) ([]monitor.Run, error) {
+func (s *Store) RunsByID(ctx context.Context, ids []int64) ([]SyncRun, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -221,18 +223,18 @@ func (s *Store) RunsByID(ctx context.Context, ids []int64) ([]monitor.Run, error
 	return s.syncRuns(ctx, "SELECT "+syncRunColumns+" FROM runs WHERE id IN (?"+strings.Repeat(", ?", len(ids)-1)+") ORDER BY id", args...)
 }
 
-func (s *Store) syncRuns(ctx context.Context, query string, args ...any) ([]monitor.Run, error) {
+func (s *Store) syncRuns(ctx context.Context, query string, args ...any) ([]SyncRun, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []monitor.Run
+	var out []SyncRun
 	for rows.Next() {
-		var r monitor.Run
+		var r SyncRun
 		var due, started, finished sql.NullInt64
 		var ts int64
-		if err := rows.Scan(&r.ID, &r.MonitorID, &due, &started, &finished, &r.Outcome, &r.OnTime, &r.DurationMS, &r.Message, &ts); err != nil {
+		if err := rows.Scan(&r.ID, &r.MonitorID, &due, &started, &finished, &r.Outcome, &r.OnTime, &r.DurationMS, &r.Message, &ts, &r.Seq); err != nil {
 			return nil, err
 		}
 		r.DueAt, r.StartedAt, r.FinishedAt = optMillis(due), optMillis(started), optMillis(finished)

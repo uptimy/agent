@@ -435,11 +435,11 @@ func (s *Syncer) setup(ctx context.Context, client *connect.Client, conn *connec
 	} else if !ok {
 		// Start now: history from before connecting would open incidents in
 		// Cloud that are long over.
-		r, n, pending, err := s.Store.SyncStartCursors(ctx)
+		r, n, err := s.Store.SyncStartCursors(ctx)
 		if err != nil {
 			return err
 		}
-		if err := s.Store.SetSyncCursors(ctx, r, n, pending); err != nil {
+		if err := s.Store.SetSyncCursors(ctx, r, n, nil); err != nil {
 			return err
 		}
 	}
@@ -753,11 +753,18 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	}
 
 	// Runs: first those the cursor passed but couldn't send yet, then the
-	// runs after the cursor. A run not sent yet is remembered (pending), not
-	// waited for, so it holds up no other run: one still running (it's sent
-	// once it finishes: the same row, updated), and one of a heartbeat not
-	// mirrored yet (a failed create), so its status change still reaches
-	// Cloud once it is. Runs older than Cloud takes are dropped.
+	// runs written since the cursor (seq: a run changes after it's recorded,
+	// e.g. a late finish turns a missed run into a success, and a start
+	// finishes). One still running is skipped: finishing writes it again. One
+	// of a heartbeat not mirrored yet (a failed create) is remembered
+	// (pending), not waited for, so it holds up no other run and its status
+	// change still reaches Cloud once it is. Runs older than Cloud takes are
+	// dropped.
+	maxSeq, err := s.Store.MaxRunSeq(ctx)
+	if err != nil {
+		return false, err
+	}
+	runsCursor = min(runsCursor, maxSeq) // the newest runs were deleted: seqs come again
 	newRuns := runsCursor
 	pendingIDs, err := s.Store.SyncPendingRuns(ctx)
 	if err != nil {
@@ -776,7 +783,8 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	take := func(run monitor.Run) bool {
 		c := cloud[run.MonitorID]
 		switch {
-		case run.Outcome == monitor.OutcomeRunning || (c.CloudUUID == "" && now.Sub(*run.FinishedAt) <= maxAge):
+		case run.Outcome == monitor.OutcomeRunning:
+		case c.CloudUUID == "" && now.Sub(*run.FinishedAt) <= maxAge:
 			pendingRuns = append(pendingRuns, run.ID)
 		case c.CloudUUID == "" || c.Kind != monitor.KindHeartbeat || now.Sub(*run.FinishedAt) > maxAge:
 		case len(runs) >= room:
@@ -788,19 +796,19 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 		return false
 	}
 	for _, run := range earlier {
-		if take(run) {
+		if take(run.Run) {
 			earlierIDs += "|" + strconv.FormatInt(run.ID, 10)
 		}
 	}
 	if left := room - len(runs); left > 0 {
-		after, err := s.Store.RunsAfter(ctx, runsCursor, left)
+		after, err := s.Store.RunsChangedAfter(ctx, runsCursor, left)
 		if err != nil {
 			return false, err
 		}
 		more = more || len(after) == left
 		for _, run := range after {
-			newRuns = run.ID
-			take(run)
+			newRuns = run.Seq
+			take(run.Run)
 		}
 	} else {
 		more = true

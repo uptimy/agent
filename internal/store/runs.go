@@ -28,11 +28,15 @@ func millis(t *time.Time) any {
 	return t.UnixMilli()
 }
 
+// nextSeq is the seq of a run being written: above every other run's, so
+// the Cloud sync's cursor sees each change once (migration 9).
+const nextSeq = "(SELECT COALESCE(MAX(seq), 0) + 1 FROM runs)"
+
 // InsertRun records a heartbeat run and returns it with its ID.
 func (s *Store) InsertRun(ctx context.Context, r monitor.Run) (monitor.Run, error) {
 	res, err := s.db.ExecContext(ctx, `INSERT INTO runs
-		(monitor_id, ts, due_at, started_at, finished_at, outcome, on_time, duration_ms, message)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(monitor_id, ts, due_at, started_at, finished_at, outcome, on_time, duration_ms, message, seq)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, `+nextSeq+`)`,
 		r.MonitorID, runTime(r).UnixMilli(), millis(r.DueAt), millis(r.StartedAt), millis(r.FinishedAt),
 		r.Outcome, r.OnTime, r.DurationMS, r.Message)
 	if err != nil {
@@ -45,7 +49,7 @@ func (s *Store) InsertRun(ctx context.Context, r monitor.Run) (monitor.Run, erro
 // UpdateRun saves a run, e.g. one that was running and has now finished.
 func (s *Store) UpdateRun(ctx context.Context, r monitor.Run) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE runs SET ts = ?, due_at = ?, started_at = ?, finished_at = ?,
-		outcome = ?, on_time = ?, duration_ms = ?, message = ? WHERE id = ?`,
+		outcome = ?, on_time = ?, duration_ms = ?, message = ?, seq = `+nextSeq+` WHERE id = ?`,
 		runTime(r).UnixMilli(), millis(r.DueAt), millis(r.StartedAt), millis(r.FinishedAt),
 		r.Outcome, r.OnTime, r.DurationMS, r.Message, r.ID)
 	return err
@@ -61,9 +65,34 @@ func (s *Store) DeleteRun(ctx context.Context, id int64) error {
 // all but keepID (0 for none): they count as missed, with message. A run
 // left running would show as running for good.
 func (s *Store) AbandonRuns(ctx context.Context, monitorID, keepID int64, message string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE runs SET outcome = ?, message = ? WHERE monitor_id = ? AND outcome = ? AND id != ?",
-		monitor.OutcomeMissed, message, monitorID, monitor.OutcomeRunning, keepID)
-	return err
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT id FROM runs WHERE monitor_id = ? AND outcome = ? AND id != ? ORDER BY id",
+			monitorID, monitor.OutcomeRunning, keepID)
+		if err != nil {
+			return err
+		}
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		// One at a time: each closed run gets a seq of its own.
+		for _, id := range ids {
+			if _, err := tx.ExecContext(ctx, "UPDATE runs SET outcome = ?, message = ?, seq = "+nextSeq+" WHERE id = ?",
+				monitor.OutcomeMissed, message, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // OpenRun returns the heartbeat's run that started and hasn't finished, or

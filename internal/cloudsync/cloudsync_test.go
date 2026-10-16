@@ -366,6 +366,53 @@ func TestRunningRunDoesNotHoldUpOthers(t *testing.T) {
 	}
 }
 
+// A run recorded as missed whose finish arrives late becomes a success in
+// place (the same row): Cloud must get the success too, or the heartbeat
+// stays down there.
+func TestLateFinishIsUploadedAgain(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	backup := e.monitor(t, monitor.Monitor{Kind: monitor.KindHeartbeat, Name: "backup", Heartbeat: &monitor.Heartbeat{Token: "tok-backup-0123456789", EverySeconds: 120}})
+	e.s.cycle(ctx)
+
+	due := e.now.Add(-time.Minute)
+	run, err := e.st.InsertRun(ctx, monitor.Run{MonitorID: backup.ID, DueAt: &due, Outcome: monitor.OutcomeMissed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.s.cycle(ctx)
+	if got := e.lastUpload().Heartbeats; len(got) != 1 || got[0].Outcome != "missed" {
+		t.Fatalf("uploaded %+v, want the missed run", got)
+	}
+
+	late := e.now.Add(time.Second)
+	run.FinishedAt, run.Outcome = &late, monitor.OutcomeSuccess
+	if err := e.st.UpdateRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	e.s.cycle(ctx)
+	if got := e.lastUpload().Heartbeats; len(got) != 1 || got[0].Outcome != "success" || got[0].HeartbeatUUID != e.mirror(t, backup.ID) {
+		t.Fatalf("uploaded %+v, want the late finish", got)
+	}
+
+	// A run abandoned while running counts as missed, and is uploaded then.
+	started := e.now.Add(-time.Hour)
+	if _, err := e.st.InsertRun(ctx, monitor.Run{MonitorID: backup.ID, StartedAt: &started, Outcome: monitor.OutcomeRunning}); err != nil {
+		t.Fatal(err)
+	}
+	e.s.cycle(ctx)
+	if got := e.lastUpload().Heartbeats; len(got) != 0 {
+		t.Fatalf("uploaded %+v while it runs", got)
+	}
+	if err := e.st.AbandonRuns(ctx, backup.ID, 0, "started and never reported finishing"); err != nil {
+		t.Fatal(err)
+	}
+	e.s.cycle(ctx)
+	if got := e.lastUpload().Heartbeats; len(got) != 1 || got[0].Outcome != "missed" {
+		t.Fatalf("uploaded %+v, want the abandoned run as missed", got)
+	}
+}
+
 func (e *env) lastUpload() connect.Upload {
 	e.cloud.mu.Lock()
 	defer e.cloud.mu.Unlock()
