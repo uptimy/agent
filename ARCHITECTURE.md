@@ -123,12 +123,12 @@ SQLite through `modernc.org/sqlite` (pure Go, so the binary builds without cgo),
 | The Uptimy connection | `settings` (JSON) | `connect.Connection` |
 | Monitors mirrored to Uptimy Cloud, and the upload cursors | `cloud_monitors`, `settings` | `store.CloudMonitor` |
 
-Domain packages own the types and `internal/store` persists them; users, which only the store and sign-in use, are the exception. Settings rows are read and written only through typed methods (`StatusPage`, `SaveStatusPage`, `UptimyConnection`, ...), and their keys never leave the store. Changes that belong together (the page's settings and its layout, a connection and its check-in URL) are saved in one transaction.
+Domain packages own the types and `internal/store` persists them; users, which only the store and sign-in use, are the exception. Settings rows are read and written only through typed methods (`StatusPage`, `SaveStatusPage`, `UptimyConnection`, ...), and their keys never leave the store. Changes that belong together (the page's settings and its layout, a connection and the settings saved with it) are saved in one transaction.
 
 Environment variables don't hold data. They set how the process runs (`PORT`, `DATA_DIR`, `RETENTION_DAYS`, ...) and two things that suit config better than a database:
 
 - `ADMIN_PASSWORD` creates the first admin and resets that admin's password on every start (the recovery path). The UI won't change a password the environment sets.
-- `MONITORS_FILE` / `MONITORS_YAML` declare monitors. They're synced into the database on start, matched by name, and read-only in the UI.
+- `MONITORS_FILE` / `MONITORS_YAML` declare monitors. They're synced into the database on start, matched by name, and read-only in the UI. A file that doesn't parse is held back whole and invalid monitors are skipped (`filesync.Apply`); the problem goes to the log and `/api/info`, never stops the agent.
 
 ## The UI
 
@@ -144,7 +144,7 @@ Live data comes from the SSE stream. Healthcheck results, which arrive constantl
 - **The public status page** shows names with uptime or on-time rate only, never targets, schedules or internal hostnames.
 - **Ping URLs** are the only credential a job needs, so they're random (144 bits) and can be replaced from the heartbeat's page. A ping can only record a run for its own heartbeat.
 - **Database targets** can read passwords from environment variables (`${VAR}`) so they aren't stored, but never the agent's own settings (`ADMIN_PASSWORD`, `UPTIMY_*`). Custom queries run read-only.
-- **The Uptimy connection** uses an agent-scoped key that can only manage the agent's own location, its mirrored monitors and its check-in; it's kept on the server and revoked on disconnect. Mirrored targets have passwords masked.
+- **The Uptimy connection** uses an agent-scoped key that can only manage the agent's own location, its mirrored monitors and its check-in; it's kept on the server and revoked on disconnect. Mirrored targets have passwords and secret query parameters masked.
 - **Errors** are scrubbed of secrets before they're shown or logged (URLs with tokens, connection strings).
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).

@@ -156,6 +156,8 @@ Environment variables set how the agent runs, its secrets, and (optionally) moni
 
 The file has two lists, `healthchecks` and `heartbeats`; see [`examples/monitors.yaml`](examples/monitors.yaml) for every check type and both kinds of schedule. Monitors from YAML are matched by name: changing one keeps its history, and removing one deletes it on the next start. They're shown read-only in the UI, though you can still pause them during maintenance and add them to the status page. Monitors created in the UI are never touched by the file. Unknown settings are an error, so a typo doesn't go unnoticed.
 
+A file with mistakes doesn't stop the agent. If it doesn't parse (a YAML syntax error, an unknown setting) or two monitors share a name, none of it is applied and the monitors stay as the last good file left them. If only some monitors are invalid, the rest are applied; an invalid one keeps its last good settings, or isn't created if it's new. Either way the error is logged and shown on the dashboard and the monitor lists until a restart with a fixed file. A database target whose `${VAR}` is unset or isn't a valid URL is applied too; only its checks fail, saying which variable is wrong.
+
 Check a file before it ships, in CI or a pre-commit hook, without starting the agent:
 
 ```sh
@@ -163,7 +165,7 @@ uptimy-agent validate monitors.yaml           # or - for stdin; with no file, MO
 docker run --rm -v "$PWD:/w" ghcr.io/uptimy/agent validate /w/monitors.yaml
 ```
 
-It reports every problem with its monitor and exits 1 if there are any. A `${VAR}` a database target uses that isn't set is a warning, since CI rarely has the secrets; `--strict-env` makes it an error. `--format json` prints a report for tools.
+It reports every problem with its monitor and exits 1 if there are any. A `${VAR}` a database target uses that isn't set, or doesn't make a valid URL, is a warning, since CI rarely has the secrets; `--strict-env` makes it an error. `--format json` prints a report for tools.
 
 ### Users and roles
 
@@ -339,8 +341,8 @@ Open **Settings → Uptimy Cloud** and click **Connect to Uptimy Cloud**. Sign i
 - **Alerts from outside.** Every upload checks the agent in. If uploads stop, Uptimy alerts you, by default after two missed uploads. Choose a longer delay in the same card. The setting lives in Uptimy, so a change made there (or with `uptimyctl heartbeats update`) shows up here too.
 - **Your monitors in Cloud, read-only.** Every healthcheck and heartbeat shows up in Uptimy with its status, uptime and history, ready for status pages on your own domain, SLA reports, alert rules, workflows and on-call. They're managed here: change, pause or delete them in the agent and Cloud follows within seconds. They don't count toward your plan's monitor limits.
 - **The agent decides.** It keeps checking and alerting on its own, with its own thresholds; Cloud records the status it decided, so both always agree. While Uptimy can't be reached, results queue up and are uploaded when it's back (up to a day).
-- **What's sent:** monitor names, types, targets with passwords masked (`${VAR}` references stay references), intervals, every status change, and results at your plan's check interval. Response bodies, headers and secrets never leave the agent.
-- The agent gets an **agent-scoped key**, which can only manage this agent's location, monitors and check-in, not the rest of your workspace. It stays on the agent's server. **Disconnect** removes the agent and its monitors from Uptimy and revokes the key; reports already made keep their numbers. Reconnecting (say, after reinstalling) reuses the same location and check-in.
+- **What's sent:** monitor names, types, targets, intervals and results: status changes as they happen (at your plan's pace) and otherwise one result per monitor every 5 minutes, in a routine upload every minute (Free: 5 minutes). Passwords and secret query parameters (`password`, `token`, `api_key`, `signature`, ...) are masked in targets before anything is sent; `${VAR}` references stay references. Response bodies and request headers aren't sent.
+- The agent gets an **agent-scoped key**, which can only manage this agent's location, monitors and check-in, not the rest of your workspace. It stays on the agent's server. **Disconnect** removes the agent and its monitors from Uptimy and revokes the key; reports already made keep their numbers. Reconnecting (say, after reinstalling) reuses the same location and check-in as long as the agent's data volume is kept, since that's where its install id lives; a fresh volume counts as a new agent toward your plan's agent limit.
 - **Planned work:** **Allow downtime** for 30 minutes, 1 hour or 4 hours before working on the agent or its server. This pushes the alert deadline back instead of pausing, so Uptimy still alerts if the agent isn't back when the window ends. **Pause until I resume** is there too, but nothing alerts until you resume.
 - How many agents a workspace can connect depends on its plan. Set `AGENT_NAME` to label the agent in Uptimy; the default is the hostname, which in Kubernetes is the pod name.
 
