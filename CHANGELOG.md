@@ -4,6 +4,8 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-16
+
 ### Added
 - **Connect to Uptimy Cloud.** Settings → Uptimy Cloud adds the agent to your Uptimy workspace as a private location. Its healthchecks and heartbeats show up there read-only, with their status, uptime and history, for status pages, SLA reports, alert rules, workflows and on-call; change them in the agent and Cloud follows within seconds. The agent still decides every status and alerts on its own; Cloud records what it decided. Each upload checks the agent in, so Uptimy alerts from outside when it goes quiet. Results queue up while Uptimy can't be reached. Passwords and secret query parameters (`password`, `token`, `api_key`, `signature`, ...) in targets are masked before anything is sent, in the UI's lists and alerts too. `UPTIMY_INGEST_URL` points elsewhere for development.
 - **Alerts are retried until they're delivered.** Each alert is saved with the status change that caused it and sent to every channel on its own: a channel that's down or answers with an error is retried with backoff for up to an hour, while one that refuses it (a deleted webhook, a revoked token) isn't retried. Alerts about a monitor reach a channel in order, so a recovery never arrives before its outage. Alerts waiting to go out survive restarts and crashes.
@@ -136,7 +138,8 @@ First public release.
 - API tokens (full or read-only) for scripts and CI.
 - Import monitors and notifications from Uptime Kuma (`kuma.db`), with a review step.
 
-[Unreleased]: https://github.com/uptimy/agent/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/uptimy/agent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/uptimy/agent/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/uptimy/agent/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/uptimy/agent/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/uptimy/agent/compare/v0.1.5...v0.1.6
