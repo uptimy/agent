@@ -552,7 +552,7 @@ func TestUpdateConnectionKeepsNewerSettings(t *testing.T) {
 
 	paused, _ := e.st.UptimyConnection(ctx)
 	paused.Paused = true
-	if err := e.st.UpdateUptimyConnection(ctx, *paused); err != nil {
+	if err := e.st.SaveUptimyConnection(ctx, *paused); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.s.updateConnection(ctx, stale, func(c *connect.Connection) { c.SampleIntervalSeconds = 900 }); err != nil {

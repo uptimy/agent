@@ -141,12 +141,6 @@ func (s *Store) SaveUptimyConnection(ctx context.Context, c connect.Connection) 
 	return setJSON(ctx, s.db, keyUptimyConnection, c)
 }
 
-// UpdateUptimyConnection stores a changed connection, e.g. paused or in
-// maintenance.
-func (s *Store) UpdateUptimyConnection(ctx context.Context, c connect.Connection) error {
-	return setJSON(ctx, s.db, keyUptimyConnection, c)
-}
-
 // ChangeUptimyConnection applies change to the stored connection, read and
 // written in one transaction, so only the fields change sets are written: a
 // caller holding a copy loaded earlier doesn't overwrite what changed since

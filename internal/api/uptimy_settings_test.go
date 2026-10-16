@@ -110,7 +110,7 @@ func TestMaintenanceWindow(t *testing.T) {
 	conn, _ := c.srv.Store.UptimyConnection(context.Background())
 	past := time.Now().Add(-time.Minute)
 	conn.MaintenanceUntil = &past
-	c.srv.Store.UpdateUptimyConnection(context.Background(), *conn)
+	c.srv.Store.SaveUptimyConnection(context.Background(), *conn)
 
 	uptimy.mu.Lock()
 	uptimy.down = true

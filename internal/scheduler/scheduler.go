@@ -134,21 +134,6 @@ func (s *Scheduler) Status(m monitor.Monitor) monitor.Status {
 	return r.status()
 }
 
-// Counts returns how many active monitors are up and down.
-func (s *Scheduler) Counts() (up, down int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, r := range s.runners {
-		switch r.status() {
-		case monitor.StatusUp:
-			up++
-		case monitor.StatusDown:
-			down++
-		}
-	}
-	return up, down
-}
-
 func (s *Scheduler) stopLocked(id int64) bool {
 	r, ok := s.runners[id]
 	if !ok {

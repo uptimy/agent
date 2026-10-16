@@ -81,7 +81,7 @@ func TestUptimySettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	conn.Paused = true
-	if err := st.UpdateUptimyConnection(ctx, conn); err != nil {
+	if err := st.SaveUptimyConnection(ctx, conn); err != nil {
 		t.Fatal(err)
 	}
 	if c, _ := st.UptimyConnection(ctx); c == nil || c.WorkspaceName != "Acme" || !c.Paused {

@@ -16,13 +16,6 @@ import (
 	"time"
 )
 
-// Default Uptimy endpoints. Overridable for development and self-hosted setups.
-const (
-	DefaultAppURL        = "https://app.upti.my"
-	DefaultAPIURL        = "https://api.upti.my"
-	DefaultHeartbeatsURL = "https://heartbeats.upti.my"
-)
-
 // ErrKeyRejected means Uptimy didn't accept the agent key (revoked, expired,
 // or never valid).
 var ErrKeyRejected = errors.New("Uptimy rejected the agent key")

@@ -83,7 +83,6 @@ type MirroredHealthcheck struct {
 // HealthcheckRef identifies a mirrored healthcheck in Cloud.
 type HealthcheckRef struct {
 	ClientRef       string `json:"clientRef"`
-	ApplicationUUID string `json:"applicationUuid"`
 	HealthcheckUUID string `json:"healthcheckUuid"`
 }
 
@@ -220,10 +219,9 @@ type UploadResult struct {
 		UUID   string `json:"uuid"`
 		Reason string `json:"reason"`
 	} `json:"rejected"`
-	Duplicate                   bool `json:"duplicate"`
-	UploadIntervalSeconds       int  `json:"uploadIntervalSeconds"`
-	StatusChangeIntervalSeconds int  `json:"statusChangeIntervalSeconds"`
-	SampleIntervalSeconds       int  `json:"sampleIntervalSeconds"`
+	UploadIntervalSeconds       int `json:"uploadIntervalSeconds"`
+	StatusChangeIntervalSeconds int `json:"statusChangeIntervalSeconds"`
+	SampleIntervalSeconds       int `json:"sampleIntervalSeconds"`
 }
 
 // UploadResults sends one batch to ingest. A repeat of a stored batch is
