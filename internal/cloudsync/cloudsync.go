@@ -12,6 +12,7 @@ package cloudsync
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -663,8 +664,13 @@ func (s *Syncer) upload(ctx context.Context, client *connect.Client, conn *conne
 	}
 
 	// The same cursors give the same batch id, so a retry after a timeout is
-	// recognized and nothing is stored twice.
+	// recognized and nothing is stored twice. An empty batch only checks the
+	// agent in: it gets an id of its own, or every idle upload would look
+	// like a repeat of the first.
 	sum := sha256.Sum256([]byte(installID + "|" + strconv.FormatInt(resultsCursor, 10) + "|" + strconv.FormatInt(runsCursor, 10) + "|" + strconv.FormatInt(newResults, 10) + "|" + strconv.FormatInt(newRuns, 10)))
+	if len(up.Healthchecks)+len(up.Heartbeats) == 0 {
+		_, _ = rand.Read(sum[:16]) // never fails (crypto/rand panics instead)
+	}
 	up.BatchID = hex.EncodeToString(sum[:16])
 
 	res, err := client.UploadResults(ctx, conn.APIKey, up)

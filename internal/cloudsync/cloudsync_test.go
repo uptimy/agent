@@ -245,6 +245,26 @@ func TestFirstCycleSetsUpMirrorsAndUploads(t *testing.T) {
 	}
 }
 
+// Ingest drops a batch id it has seen as a duplicate: idle uploads, which
+// only check the agent in, must not share one.
+func TestIdleUploadsHaveTheirOwnBatchID(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.s.cycle(ctx)
+	e.s.cycle(ctx)
+	e.s.cycle(ctx)
+	ids := map[string]bool{}
+	for _, u := range e.cloud.uploads {
+		if len(u.Healthchecks)+len(u.Heartbeats) != 0 || u.BatchID == "" {
+			t.Fatalf("upload %+v, want an empty batch with an id", u)
+		}
+		ids[u.BatchID] = true
+	}
+	if len(e.cloud.uploads) != 3 || len(ids) != 3 {
+		t.Fatalf("%d idle uploads with %d batch ids, want one id each", len(e.cloud.uploads), len(ids))
+	}
+}
+
 // The scheduler records a status change after the check that caused it has
 // finished: that result must already carry the new status.
 func TestResultCarriesTheStatusItCaused(t *testing.T) {
