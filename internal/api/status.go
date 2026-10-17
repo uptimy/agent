@@ -213,33 +213,34 @@ func (s *Server) publicStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// overallStatus is the page's headline. Same rule as the hosted Uptimy
-// status pages: anything down is an outage, unless it's down for announced
-// maintenance. An open incident is "degraded", or an outage when critical.
+// overallStatus is the page's headline, ordered like the hosted Uptimy status
+// pages: a critical or high incident is an outage (it was reported on
+// purpose, maintenance or not); so is a monitor that's down outside its
+// announced maintenance; then maintenance in progress; then any other open
+// incident is "degraded".
 func overallStatus(anyDown bool, incidents []publicIncident, maintenance []publicMaintenance) string {
-	overall := "operational"
-	if anyDown {
-		overall = "outage"
-	}
+	major, open := false, false
 	for _, inc := range incidents {
 		if inc.ResolvedAt != nil {
 			continue
 		}
-		switch {
-		case inc.Severity == incident.Critical:
-			overall = "outage"
-		case overall != "outage":
-			overall = "degraded"
+		open = true
+		if inc.Severity == incident.Critical || inc.Severity == incident.High {
+			major = true
 		}
 	}
-	if overall == "operational" {
-		for _, n := range maintenance {
-			if n.Active {
-				overall = "maintenance"
-			}
+	if major || anyDown {
+		return "outage"
+	}
+	for _, n := range maintenance {
+		if n.Active {
+			return "maintenance"
 		}
 	}
-	return overall
+	if open {
+		return "degraded"
+	}
+	return "operational"
 }
 
 // pageOverall is overallStatus for the page as it is now, without the

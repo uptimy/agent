@@ -1,7 +1,7 @@
 // Planned work on the public page, as on the hosted Uptimy status pages.
 import { Calendar, CalendarCheck, CalendarClock, CheckCircle2, CircleDot, Clock } from "lucide-react";
 import type { PublicMaintenance } from "@/lib/api";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn, recentAgo } from "@/lib/utils";
 
 const theme: Record<
   PublicMaintenance["state"],
@@ -15,7 +15,7 @@ const theme: Record<
     chip: "bg-sky-500/10 text-blue-700 ring-sky-500/20 dark:text-blue-300",
   },
   active: {
-    label: "In Progress",
+    label: "In progress",
     icon: CircleDot,
     rail: "bg-degraded",
     dot: "bg-degraded",
@@ -74,7 +74,7 @@ export function MaintenanceCard({ m }: { m: PublicMaintenance }) {
     ...(m.state !== "scheduled"
       ? [
           {
-            label: "In Progress",
+            label: "In progress",
             at: m.starts_at,
             icon: CircleDot,
             ring: "border-degraded/30 bg-degraded/10",
@@ -98,8 +98,9 @@ export function MaintenanceCard({ m }: { m: PublicMaintenance }) {
   ];
 
   return (
-    <div className="relative overflow-hidden rounded-xl border bg-card transition-shadow duration-200 hover:shadow-sm">
-      <span className={cn("absolute inset-y-0 left-0 w-[3px]", t.rail)} />
+    // A row in a framed list (StatusList); the edge marks maintenance in progress only.
+    <div className="relative">
+      {active && <span className={cn("absolute inset-y-0 left-0 w-[3px]", t.rail)} />}
       <div className="space-y-4 px-4 py-4 sm:px-5 sm:py-5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="relative flex size-2.5 shrink-0">
@@ -181,7 +182,7 @@ export function MaintenanceCard({ m }: { m: PublicMaintenance }) {
           </div>
           <div className="relative pl-8">
             <div className="absolute top-3 bottom-3 left-[11px] w-px bg-border" />
-            <div className="space-y-6">
+            <div className="space-y-5">
               {timeline.map((e) => (
                 <div key={e.label} className="relative">
                   <div
@@ -196,7 +197,7 @@ export function MaintenanceCard({ m }: { m: PublicMaintenance }) {
                     <span className={cn("text-sm font-medium", e.text)}>{e.label}</span>
                     <span className="text-xs text-muted-foreground tabular-nums">
                       {formatWhen(e.at)}
-                      <span className="ml-1 opacity-60">({timeAgo(e.at)})</span>
+                      {recentAgo(e.at) && <span className="ml-1 opacity-60">· {recentAgo(e.at)}</span>}
                     </span>
                   </div>
                 </div>
