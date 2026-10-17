@@ -4,6 +4,10 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+### Changed
+- **The status page matches Uptimy's hosted status pages.** Each section is one frame of compact rows: a monitor shows its status, uptime and daily bars in one row (fewer on narrow screens), and only monitors that are down or in maintenance get a colored edge. Incidents and maintenance are rows too, with their timeline oldest first and a final **Resolved** step. Day tooltips are restyled, and a loading placeholder keeps the page's shape.
+- The banner follows hosted pages' order: an open high incident is now an outage (before, only critical), and maintenance in progress now shows over a lower-severity incident.
+
 ## [0.2.0] - 2026-10-16
 
 ### Added

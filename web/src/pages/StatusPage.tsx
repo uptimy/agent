@@ -1,11 +1,11 @@
 // Public status page. Layout, copy and colours mirror the hosted Uptimy
 // status pages (upti.my-status) so every agent status page reads as Uptimy.
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, AlertTriangle, CheckCircle, Clock, ExternalLink, XCircle, Wrench } from "lucide-react";
 import { api, type PublicMonitor, type PublicStatus, type Status } from "@/lib/api";
 import { cn, formatDateTime, timeAgo } from "@/lib/utils";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { DailyBars } from "@/components/status";
 import { PoweredBy } from "@/components/brand";
 import { MaintenanceCard } from "@/components/status-page/maintenance";
@@ -14,6 +14,7 @@ import { useTheme } from "@/lib/theme";
 import { ErrorNote } from "@/components/Layout";
 import { IncidentCard } from "@/components/status-page/incidents";
 import { AnnouncementCard } from "@/components/status-page/announcement";
+import { StatusEmpty, StatusList, StatusSection, UptimeLegend } from "@/components/status-page/section";
 
 const brandText = "text-[#268256] dark:text-[#65bd91]"; // emerald-600 / 400 in the Uptimy ramp
 
@@ -35,7 +36,7 @@ const banners: Record<
     iconBg: "bg-up/10",
     tint: "bg-up/5",
     titleColor: brandText,
-    title: "All Systems Operational",
+    title: "All systems operational",
     subtitle: "All systems are running smoothly",
   },
   maintenance: {
@@ -44,7 +45,7 @@ const banners: Record<
     iconBg: "bg-sky-500/10",
     tint: "bg-sky-500/5",
     titleColor: "text-sky-600 dark:text-sky-400",
-    title: "Maintenance in Progress",
+    title: "Maintenance in progress",
     subtitle: "Some services are under planned maintenance",
   },
   degraded: {
@@ -53,7 +54,7 @@ const banners: Record<
     iconBg: "bg-degraded/10",
     tint: "bg-degraded/5",
     titleColor: "text-orange-600 dark:text-orange-400",
-    title: "Some Issues Detected",
+    title: "Some issues detected",
     subtitle: "Some services are experiencing issues",
   },
   outage: {
@@ -62,7 +63,7 @@ const banners: Record<
     iconBg: "bg-down/10",
     tint: "bg-down/5",
     titleColor: "text-red-600 dark:text-red-400",
-    title: "Outage Detected",
+    title: "Outage detected",
     subtitle: "We're working to resolve the issues",
   },
 };
@@ -83,6 +84,7 @@ export function StatusPage() {
     refetchInterval: 30_000,
   });
   const s = status.data;
+  const daysToShow = useDaysToShow();
   const title = s?.title;
   const active = s?.incidents.filter((i) => !i.resolved_at) ?? [];
   const past = s?.incidents.filter((i) => i.resolved_at) ?? [];
@@ -99,6 +101,7 @@ export function StatusPage() {
     >
       <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
         {status.error && <ErrorNote error={status.error} />}
+        {!s && !status.error && <StatusSkeleton />}
         {s && (
           <>
             <div className="mb-6 sm:mb-8">
@@ -140,110 +143,99 @@ export function StatusPage() {
             )}
 
             {s.sections.length === 0 ? (
-              <Card className="mt-8">
-                <CardContent className="py-8 text-center">
-                  <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-muted">
-                    <AlertCircle className="size-6 text-muted-foreground" />
-                  </div>
-                  <p className="text-sm text-muted-foreground">No monitors to show yet.</p>
-                </CardContent>
-              </Card>
+              <div className="mt-10">
+                <StatusList>
+                  <StatusEmpty icon={<AlertCircle className="size-4" />}>No monitors to show yet.</StatusEmpty>
+                </StatusList>
+              </div>
             ) : (
-              s.sections.map((section) => (
-                <Card key={section.name} className="mt-8">
-                  <SectionHeader title={section.name} />
-                  <CardContent className="flex flex-col gap-6 p-3 sm:p-6">
-                    {section.monitors.map((m) => (
-                      <MonitorCard key={m.name} m={m} />
-                    ))}
-                  </CardContent>
-                </Card>
-              ))
+              <div className="mt-10 space-y-10">
+                {s.sections.map((section) => (
+                  <StatusSection
+                    key={section.name}
+                    title={section.name}
+                    titleStyle={{ color: "var(--status-accent, var(--foreground))" }}
+                    aside={<UptimeLegend />}
+                  >
+                    <StatusList>
+                      {section.monitors.map((m) => (
+                        <MonitorRow key={m.name} m={m} daysToShow={daysToShow} />
+                      ))}
+                    </StatusList>
+                  </StatusSection>
+                ))}
+              </div>
             )}
 
             {active.length > 0 && (
-              <Card className="mt-10 overflow-hidden border border-down/20">
-                <CardHeader className="border-b border-down/10 bg-down/5">
-                  <CardTitle className="flex items-center justify-between text-base font-semibold text-red-600 dark:text-red-400">
-                    <span className="flex items-center">
-                      <span className="mr-3 h-5 w-1 rounded-full bg-down" />
-                      <span className="relative mr-2.5 size-2.5">
-                        <span className="absolute inset-0 rounded-full bg-down" />
-                        <span className="absolute inset-0 animate-ping rounded-full bg-red-400 opacity-75 motion-reduce:hidden" />
-                      </span>
-                      Active Incidents
-                    </span>
-                    <CountBadge className="border-down/30 text-red-600 dark:text-red-400">{active.length}</CountBadge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 p-3 sm:p-5">
+              <StatusSection
+                className="mt-12"
+                title={<span className="text-red-600 dark:text-red-400">Active incidents</span>}
+                icon={
+                  <span className="relative flex size-2.5">
+                    <span className="absolute inline-flex size-full animate-ping rounded-full bg-down opacity-60 motion-reduce:hidden" />
+                    <span className="relative inline-flex size-2.5 rounded-full bg-down" />
+                  </span>
+                }
+                aside={<span className="text-sm text-muted-foreground tabular-nums">{active.length}</span>}
+              >
+                <StatusList>
                   {active.map((i) => (
                     <IncidentCard key={`${i.created_at}-${i.title}`} incident={i} />
                   ))}
-                </CardContent>
-              </Card>
+                </StatusList>
+              </StatusSection>
             )}
 
             {past.length > 0 && (
-              <Card className={cn("overflow-hidden", active.length > 0 ? "mt-6" : "mt-10")}>
-                <CardHeader className="border-b bg-muted/50">
-                  <CardTitle className="flex items-center justify-between text-base font-semibold text-muted-foreground">
-                    <span className="flex items-center">
-                      <span className="mr-3 h-5 w-1 rounded-full bg-neutral-400 dark:bg-neutral-600" />
-                      <Clock className="mr-2 size-4" />
-                      Past Incidents
-                    </span>
-                    <CountBadge>{past.length}</CountBadge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 p-3 sm:space-y-4 sm:p-5">
+              <StatusSection
+                className="mt-12"
+                title="Past incidents"
+                icon={<Clock className="size-4 text-muted-foreground" />}
+                aside={<span className="text-sm text-muted-foreground tabular-nums">{past.length}</span>}
+              >
+                <StatusList>
                   {past.map((i) => (
                     <IncidentCard key={`${i.created_at}-${i.title}`} incident={i} />
                   ))}
-                </CardContent>
-              </Card>
+                </StatusList>
+              </StatusSection>
             )}
 
             {s.maintenance.length > 0 && (
-              <Card className="mt-6 overflow-hidden border border-degraded/20">
-                <CardHeader className="border-b border-degraded/10 bg-degraded/5">
-                  <CardTitle className="flex items-center text-base font-semibold text-orange-600 dark:text-orange-400">
-                    <span className="mr-3 h-5 w-1 rounded-full bg-degraded" />
-                    <Wrench className="mr-2 size-4" />
-                    Scheduled Maintenance
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-6 p-3 sm:p-6">
+              <StatusSection
+                className="mt-12"
+                title="Scheduled maintenance"
+                icon={<Wrench className="size-4 text-muted-foreground" />}
+              >
+                <StatusList>
                   {[...s.maintenance]
                     .sort((a, b) => maintenanceRank[a.state] - maintenanceRank[b.state])
                     .map((m) => (
                       <MaintenanceCard key={`${m.title}-${m.starts_at}`} m={m} />
                     ))}
-                </CardContent>
-              </Card>
+                </StatusList>
+              </StatusSection>
             )}
 
             {s.events.length > 0 && (
-              <Card className="mt-8">
-                <SectionHeader title="Recent events" />
-                <CardContent className="p-3 sm:p-6">
-                  <ol className="divide-y">
-                    {s.events.map((e, i) => (
-                      <li key={i} className="flex items-baseline justify-between gap-4 py-3 text-sm">
-                        <span>
-                          <span className="font-medium">{e.monitor}</span>{" "}
-                          <span className={e.status === "down" ? "text-red-600 dark:text-red-400" : brandText}>
-                            {e.status === "down" ? "went down" : "recovered"}
-                          </span>
+              <StatusSection className="mt-12" title="Recent events">
+                <StatusList>
+                  {s.events.map((e, i) => (
+                    <div key={i} className="flex items-baseline justify-between gap-4 px-4 py-3 text-sm sm:px-5">
+                      <span>
+                        <span className="font-medium">{e.monitor}</span>{" "}
+                        <span className={e.status === "down" ? "text-red-600 dark:text-red-400" : brandText}>
+                          {e.status === "down" ? "went down" : "recovered"}
                         </span>
-                        <time className="shrink-0 text-xs text-muted-foreground" dateTime={e.time}>
-                          {formatDateTime(e.time)}
-                        </time>
-                      </li>
-                    ))}
-                  </ol>
-                </CardContent>
-              </Card>
+                      </span>
+                      <time className="shrink-0 text-xs text-muted-foreground" dateTime={e.time}>
+                        {formatDateTime(e.time)}
+                      </time>
+                    </div>
+                  ))}
+                </StatusList>
+              </StatusSection>
             )}
 
             <footer className="mt-10 flex flex-col items-center gap-3 text-xs text-muted-foreground">
@@ -264,24 +256,11 @@ export function StatusPage() {
 /** In progress first, then upcoming, then recently completed. */
 const maintenanceRank = { active: 0, scheduled: 1, ended: 2 } as const;
 
-function CountBadge({ className, children }: { className?: string; children: React.ReactNode }) {
-  return (
-    <span
-      className={cn(
-        "rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums",
-        className,
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
 function Banner({ overall }: { overall: PublicStatus["overall"] }) {
   const b = banners[overall];
   const Icon = b.icon;
   return (
-    <Card className="overflow-hidden shadow-sm">
+    <Card className="overflow-hidden shadow-none">
       <div className={cn("flex justify-center p-4 sm:p-6 lg:p-8", b.tint)}>
         <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:gap-4 sm:text-left">
           <div className={cn("shrink-0 rounded-full p-2 sm:p-2.5", b.iconBg)}>
@@ -299,7 +278,11 @@ function Banner({ overall }: { overall: PublicStatus["overall"] }) {
 
 const maintenanceAccent = { border: "border-l-sky-500", dot: "bg-sky-500", live: false };
 
-function MonitorCard({ m }: { m: PublicMonitor }) {
+/**
+ * One monitor, as on the hosted Uptimy status pages (StatusMonitorRow): a row
+ * with its status, name and uptime, then its daily bars.
+ */
+function MonitorRow({ m, daysToShow }: { m: PublicMonitor; daysToShow: number }) {
   const accent = m.in_maintenance ? maintenanceAccent : accents[m.status];
   const pct = m.ratio == null ? null : m.ratio * 100;
   // A healthcheck's uptime, or the share of a heartbeat's runs that were on time.
@@ -308,17 +291,16 @@ function MonitorCard({ m }: { m: PublicMonitor }) {
   const when = heartbeat
     ? { label: "Last run", time: m.last_run }
     : { label: "Last change", time: m.last_change ?? undefined };
+  const days = m.days.slice(-daysToShow);
+  // The edge only for what needs attention: down, or in maintenance.
+  const edge = m.in_maintenance ? "bg-sky-500" : m.status === "down" ? "bg-down" : null;
 
   return (
-    <div
-      className={cn(
-        "rounded-xl border border-l-[3px] bg-card p-4 transition-shadow hover:shadow-sm sm:p-5",
-        accent.border,
-      )}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3 sm:flex-nowrap">
-        <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
-          <span className="relative mt-0.5 flex size-2.5 shrink-0">
+    <div className="relative px-4 py-4 sm:px-5">
+      {edge && <span aria-hidden="true" className={cn("absolute inset-y-0 left-0 w-[3px]", edge)} />}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="relative flex size-2.5 shrink-0">
             {accent.live && (
               <span
                 className={cn(
@@ -329,64 +311,43 @@ function MonitorCard({ m }: { m: PublicMonitor }) {
             )}
             <span className={cn("relative inline-flex size-2.5 rounded-full", accent.dot)} />
           </span>
-          <div className="min-w-0 flex-1">
-            <h3 className="mb-1 text-sm font-medium sm:text-base">{m.name}</h3>
-            <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-muted-foreground">
-              {m.type_label}
-            </span>
-            {m.in_maintenance && (
-              <span className="ml-1.5 inline-flex items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-sky-600 dark:text-sky-400">
-                Maintenance
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <h3 className="truncate text-sm font-semibold sm:text-base">{m.name}</h3>
+              <span className="hidden shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground sm:inline-flex">
+                {m.type_label}
               </span>
-            )}
+              {m.in_maintenance && (
+                <span className="inline-flex shrink-0 items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium text-sky-600 dark:text-sky-400">
+                  Maintenance
+                </span>
+              )}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">
+              {when.label}: {when.time ? formatDateTime(when.time) : "never"}
+            </div>
           </div>
         </div>
-        <div className="shrink-0 text-right">
-          <div
-            className={cn(
-              "mb-1 text-lg font-semibold tabular-nums sm:text-xl",
-              pct == null
-                ? "text-muted-foreground"
-                : pct >= 99
-                  ? brandText
-                  : pct >= 95
-                    ? "text-orange-600 dark:text-orange-400"
-                    : "text-red-600 dark:text-red-400",
-            )}
-            title={
-              heartbeat
-                ? `Runs on time over the last ${m.days.length} days.`
-                : `Total uptime for the last ${m.days.length} days.`
-            }
-          >
-            {pct == null ? "--" : pct.toFixed(2)}%
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {when.label}: {/* Own line on phones, so the timestamp doesn't squeeze the name. */}
-            <span className="block font-medium sm:inline">
-              {when.time ? new Date(when.time).toLocaleString() : "Never"}
-            </span>
-          </div>
+        <div
+          className={cn(
+            "shrink-0 text-right text-base font-semibold tabular-nums sm:text-lg",
+            pct == null
+              ? "text-muted-foreground"
+              : pct >= 99
+                ? brandText
+                : pct >= 95
+                  ? "text-orange-600 dark:text-orange-400"
+                  : "text-red-600 dark:text-red-400",
+          )}
+        >
+          {pct == null ? <span className="text-sm font-medium">No data yet</span> : `${pct.toFixed(2)}%`}
         </div>
       </div>
 
-      <div className="mt-4 sm:mt-6">
-        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h4 className="text-xs font-medium text-muted-foreground">
-            {m.days.length}-day {heartbeat ? "on-time runs" : "uptime"}
-          </h4>
-          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-            <Legend className="bg-up" label="99%+" />
-            <Legend className="bg-degraded" label="95–99%" />
-            <Legend className="bg-down" label="<95%" />
-            <Legend className="bg-no-data" label="No data" />
-          </div>
-        </div>
-        <div className="rounded-lg border bg-muted/30 p-2 sm:p-3">
-          <DailyBars days={m.days} measure={measure} />
-        </div>
-        <div className="mt-2 flex justify-between px-1 text-[11px] text-muted-foreground">
-          <span>{m.days.length} days ago</span>
+      <div className="mt-3">
+        <DailyBars days={days} measure={measure} barClassName="h-7" />
+        <div className="mt-1.5 flex justify-between text-xs text-muted-foreground">
+          <span>{days.length} days ago</span>
           <span>Today</span>
         </div>
       </div>
@@ -394,12 +355,49 @@ function MonitorCard({ m }: { m: PublicMonitor }) {
   );
 }
 
-function Legend({ className, label }: { className: string; label: string }) {
+/**
+ * Days of bars by screen width, as on hosted status pages: 90 on desktop,
+ * 60 on tablets, 30 on phones. Capped by the history the API sends.
+ */
+function useDaysToShow() {
+  const pick = () => (window.innerWidth < 768 ? 30 : window.innerWidth < 1024 ? 60 : 90);
+  const [n, setN] = useState(pick);
+  useEffect(() => {
+    const onResize = () => setN(pick());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return n;
+}
+
+/** Loading placeholder in the page's shape, so nothing jumps when data arrives. */
+function StatusSkeleton() {
+  const block = "animate-pulse rounded-md bg-muted";
   return (
-    <span className="flex items-center gap-1">
-      <span className={cn("size-2 rounded-sm", className)} />
-      {label}
-    </span>
+    <div role="status" aria-busy="true" className="space-y-10">
+      <span className="sr-only">Loading status page…</span>
+      <div className="flex items-center justify-between">
+        <div className={cn(block, "h-10 w-40")} />
+        <div className={cn(block, "h-9 w-24")} />
+      </div>
+      <div className="h-24 rounded-xl border bg-card" />
+      {[0, 1].map((g) => (
+        <div key={g}>
+          <div className={cn(block, "mb-3 h-4 w-32")} />
+          <div className="divide-y overflow-hidden rounded-xl border bg-card">
+            {[0, 1, 2].map((r) => (
+              <div key={r} className="px-4 py-4 sm:px-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className={cn(block, "h-4 w-40")} />
+                  <div className={cn(block, "h-5 w-16")} />
+                </div>
+                <div className={cn(block, "mt-3 h-7 w-full")} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -416,17 +414,6 @@ function ThemeToggle() {
       {resolved === "dark" ? <Moon className="size-4" /> : <Sun className="size-4" />}
       <span className="sr-only">Switch to {next} theme</span>
     </button>
-  );
-}
-
-function SectionHeader({ title }: { title: string }) {
-  return (
-    <CardHeader className="border-b bg-muted/50 pb-5">
-      <CardTitle className="flex items-center text-base text-(--status-accent,var(--foreground))">
-        <span className="mr-3 h-6 w-1 shrink-0 rounded-full bg-(--status-accent,var(--primary))" />
-        {title}
-      </CardTitle>
-    </CardHeader>
   );
 }
 

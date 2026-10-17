@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, Clock, Eye, MessageSquare, Zap } from "lucide-react";
 import type { IncidentSeverity, IncidentStatus, PublicIncident } from "@/lib/api";
-import { cn, formatDateTime, timeAgo } from "@/lib/utils";
+import { cn, formatDateTime, recentAgo } from "@/lib/utils";
 
 export const statusTheme: Record<
   IncidentStatus,
@@ -142,8 +142,9 @@ export function IncidentCard({ incident }: { incident: PublicIncident }) {
   const when = formatDateTime(resolved ? incident.resolved_at! : incident.created_at);
 
   return (
-    <div className="relative overflow-hidden rounded-xl border bg-card transition-shadow duration-200 hover:shadow-sm">
-      <span className={cn("absolute inset-y-0 left-0 w-[3px]", theme.rail)} />
+    // A row in a framed list (StatusList); the edge marks open incidents only.
+    <div className="relative">
+      {!resolved && <span className={cn("absolute inset-y-0 left-0 w-[3px]", theme.rail)} />}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -216,15 +217,6 @@ export function IncidentCard({ incident }: { incident: PublicIncident }) {
       {expanded && (
         <div className="space-y-4 border-t border-border/70 px-4 pt-4 pb-4 sm:px-5 sm:pb-5">
           <PublicTimeline incident={incident} />
-          {resolved && (
-            <div className="flex items-center justify-between rounded-lg border border-up/15 bg-up/[0.05] px-3 py-2.5">
-              <span className="flex items-center gap-2 text-[13px] font-medium text-emerald-700 dark:text-emerald-300">
-                <CheckCircle2 className="size-4" />
-                Resolved
-              </span>
-              <span className="text-xs text-emerald-600 tabular-nums dark:text-emerald-400">{when}</span>
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -242,7 +234,7 @@ function PublicTimeline({ incident }: { incident: PublicIncident }) {
       </div>
       <div className="relative pl-8">
         <div className="absolute top-3 bottom-3 left-[11px] w-px bg-border" />
-        <div className="space-y-6">
+        <div className="space-y-5">
           <div className="relative">
             <div className="absolute top-0 -left-8 z-10 flex size-6 items-center justify-center rounded-full border border-red-500/30 bg-red-500/10">
               <Zap className="size-3 text-red-500" />
@@ -265,7 +257,7 @@ function PublicTimeline({ incident }: { incident: PublicIncident }) {
                   <MessageSquare className={cn("size-3", theme ? theme.text : "text-blue-500")} />
                 </div>
                 <div className="min-h-6">
-                  <div className="mb-2 flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between">
+                  <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between">
                     <span
                       className={cn("text-sm font-medium", theme ? theme.text : "text-blue-600 dark:text-blue-400")}
                     >
@@ -273,15 +265,22 @@ function PublicTimeline({ incident }: { incident: PublicIncident }) {
                     </span>
                     <TimelineTime iso={u.time} />
                   </div>
-                  <div className="rounded-md border bg-muted/50 p-2.5">
-                    <p className="text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground sm:text-sm">
-                      {u.message}
-                    </p>
-                  </div>
+                  <p className="mt-1 text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">{u.message}</p>
                 </div>
               </div>
             );
           })}
+          {incident.resolved_at && (
+            <div className="relative">
+              <div className="absolute top-0 -left-8 z-10 flex size-6 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10">
+                <CheckCircle2 className="size-3 text-up" />
+              </div>
+              <div className="flex min-h-6 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between">
+                <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Resolved</span>
+                <TimelineTime iso={incident.resolved_at} />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -300,7 +299,7 @@ function TimelineTime({ iso }: { iso: string }) {
   return (
     <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
       {formatDateTime(iso)}
-      <span className="ml-1 opacity-60">({timeAgo(iso)})</span>
+      {recentAgo(iso) && <span className="ml-1 opacity-60">· {recentAgo(iso)}</span>}
     </span>
   );
 }

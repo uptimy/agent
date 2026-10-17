@@ -72,6 +72,11 @@ export function timeAgo(iso: string) {
   return rtf.format(Math.round(diff / 86400), "day");
 }
 
+/** timeAgo within the last week; older ones have their date beside them already. */
+export function recentAgo(iso: string) {
+  return Date.now() - new Date(iso).getTime() < 7 * 86400_000 ? timeAgo(iso) : null;
+}
+
 export function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
     month: "short",
