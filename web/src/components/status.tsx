@@ -85,7 +85,16 @@ function dailyColor(ratio: number | null) {
  * ratio is a healthcheck's uptime or the share of a heartbeat's runs that
  * were on time; measure names it in the tooltip.
  */
-export function DailyBars({ days, measure = "uptime" }: { days: Daily[]; measure?: "uptime" | "on time" }) {
+export function DailyBars({
+  days,
+  measure = "uptime",
+  barClassName = "h-8 sm:h-10",
+}: {
+  days: Daily[];
+  measure?: "uptime" | "on time";
+  /** Bar height; the status page uses shorter bars than the monitor pages. */
+  barClassName?: string;
+}) {
   const { bind, tip } = useTooltip();
   return (
     <div
@@ -99,7 +108,8 @@ export function DailyBars({ days, measure = "uptime" }: { days: Daily[]; measure
           key={d.date}
           {...bind(<DayTip d={d} measure={measure} />)}
           className={cn(
-            "h-8 rounded-[3px] transition hover:brightness-110 sm:h-10",
+            "rounded-[3px] transition hover:brightness-110",
+            barClassName,
             dailyColor(d.count ? d.ratio : null),
           )}
         />
@@ -116,25 +126,31 @@ function DayTip({ d, measure }: { d: Daily; measure: "uptime" | "on time" }) {
     day: "numeric",
     timeZone: "UTC",
   });
+  // Laid out like the hosted tooltip: the day, the figure in its colour, a footnote.
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-neutral-400">{date}</span>
-      {d.count ? (
-        <span className="flex items-center gap-1.5 font-medium">
-          <span className={cn("size-2 rounded-sm", dailyColor(d.ratio))} />
-          {formatUptime(d.ratio)} {measure}
-          {measure === "on time" && (
-            <span className="font-normal text-neutral-400">
-              · {d.count} run{d.count === 1 ? "" : "s"}
-            </span>
-          )}
-        </span>
-      ) : (
-        <span className="font-medium">No data</span>
-      )}
+    <div className="min-w-36">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="font-semibold">{date}</span>
+        {d.count ? (
+          <span className={cn("flex items-center gap-1.5 text-sm font-semibold tabular-nums", tipTone(d.ratio ?? 0))}>
+            <span className="size-1.5 rounded-full bg-current" />
+            {formatUptime(d.ratio)}
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-1 text-[11px] text-neutral-400">
+        {d.count
+          ? measure === "on time"
+            ? `On time · ${d.count} run${d.count === 1 ? "" : "s"}`
+            : "Uptime"
+          : "No data"}
+      </div>
     </div>
   );
 }
+
+const tipTone = (ratio: number) =>
+  ratio >= 0.99 ? "text-emerald-400" : ratio >= 0.95 ? "text-orange-400" : "text-red-400";
 
 const stateDot = {
   up: "bg-up",

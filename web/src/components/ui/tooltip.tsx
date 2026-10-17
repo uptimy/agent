@@ -58,10 +58,17 @@ export function useTooltip() {
         <div
           ref={ref}
           role="tooltip"
-          className="pointer-events-none fixed z-50 rounded-md bg-neutral-900 px-2.5 py-1.5 text-xs whitespace-nowrap text-white shadow-lg dark:bg-neutral-800"
-          style={{ left: tip.x + shift, top: tip.y - 8, transform: "translate(-50%, -100%)" }}
+          // The hosted Uptimy tooltip's look (dark glass), so agent and hosted
+          // status pages read the same.
+          className="pointer-events-none fixed z-50 rounded-[10px] border border-white/[0.09] bg-[rgba(17,19,24,0.94)] px-3 py-2 text-xs whitespace-nowrap text-neutral-50 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.45),0_2px_6px_rgba(0,0,0,0.18),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-md"
+          style={{ left: tip.x + shift, top: tip.y - 10, transform: "translate(-50%, -100%)" }}
         >
           {tip.content}
+          <span
+            aria-hidden="true"
+            className="absolute -bottom-[6px] size-2.5 rotate-45 border-r border-b border-white/[0.09] bg-[rgb(17,19,24)]"
+            style={{ left: `calc(50% - ${shift}px - 5px)` }}
+          />
         </div>,
         document.body,
       )
