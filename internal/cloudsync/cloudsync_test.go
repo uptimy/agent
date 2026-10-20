@@ -1002,3 +1002,16 @@ func TestAgentLimitStopsSetUp(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// Cloud gets a cron heartbeat's real schedule, not an interval guessed from
+// its next two runs (wrong for e.g. weekdays only).
+func TestMirroredHeartbeatKeepsTheSchedule(t *testing.T) {
+	cron := mirroredHeartbeat(monitor.Monitor{Name: "report", Heartbeat: &monitor.Heartbeat{Cron: "0 9 * * 1-5", Timezone: "Europe/Berlin", GraceSeconds: 600}})
+	if cron.IntervalSeconds != 0 || cron.Cron != "0 9 * * 1-5" || cron.Timezone != "Europe/Berlin" || cron.GraceSeconds != 600 {
+		t.Fatalf("cron heartbeat mirrored as %+v", cron)
+	}
+	every := mirroredHeartbeat(monitor.Monitor{Name: "backup", Heartbeat: &monitor.Heartbeat{EverySeconds: 3600, GraceSeconds: 300}})
+	if every.IntervalSeconds != 3600 || every.Cron != "" || every.Timezone != "" {
+		t.Fatalf("interval heartbeat mirrored as %+v", every)
+	}
+}

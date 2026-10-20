@@ -122,12 +122,25 @@ const (
 )
 
 // MirroredHeartbeat is what Cloud shows for one of the agent's heartbeats.
+// Its schedule is IntervalSeconds, or Cron in Timezone (IntervalSeconds 0).
 type MirroredHeartbeat struct {
 	Name            string `json:"name"`
 	Description     string `json:"description,omitempty"`
 	IntervalSeconds int    `json:"intervalSeconds"`
+	Cron            string `json:"cron,omitempty"`
+	Timezone        string `json:"timezone,omitempty"`
 	GraceSeconds    int    `json:"graceSeconds"`
 	Paused          bool   `json:"paused"`
+}
+
+// scheduleFields is the heartbeat's schedule as Cloud takes it. cron is always
+// sent: "" tells Cloud the heartbeat is on an interval (again).
+func (h MirroredHeartbeat) scheduleFields(body map[string]any) map[string]any {
+	body["intervalSeconds"], body["cron"] = h.IntervalSeconds, h.Cron
+	if h.Cron != "" {
+		body["timezone"] = h.Timezone
+	}
+	return body
 }
 
 // HeartbeatRef identifies an agent-managed heartbeat in Cloud.
@@ -141,11 +154,10 @@ type HeartbeatRef struct {
 // returns the existing one with this clientRef (Cloud applies the source to
 // it: the agent's old check-in heartbeat becomes its liveness heartbeat).
 func (c *Client) EnsureAgentHeartbeat(ctx context.Context, key, clientRef, source string, h MirroredHeartbeat) (HeartbeatRef, error) {
-	body := map[string]any{
-		"name": h.Name, "description": h.Description,
-		"intervalSeconds": h.IntervalSeconds, "graceSeconds": h.GraceSeconds,
+	body := h.scheduleFields(map[string]any{
+		"name": h.Name, "description": h.Description, "graceSeconds": h.GraceSeconds,
 		"paused": h.Paused, "clientRef": clientRef, "source": source,
-	}
+	})
 	var out struct {
 		Data HeartbeatRef `json:"data"`
 	}
@@ -155,11 +167,10 @@ func (c *Client) EnsureAgentHeartbeat(ctx context.Context, key, clientRef, sourc
 
 // PutAgentHeartbeat replaces an agent heartbeat's settings.
 func (c *Client) PutAgentHeartbeat(ctx context.Context, key, uuid string, h MirroredHeartbeat) error {
-	body := map[string]any{
-		"name": h.Name, "description": h.Description,
-		"intervalSeconds": h.IntervalSeconds, "graceSeconds": h.GraceSeconds,
+	body := h.scheduleFields(map[string]any{
+		"name": h.Name, "description": h.Description, "graceSeconds": h.GraceSeconds,
 		"paused": h.Paused, "failureThreshold": 1, "recoveryThreshold": 1,
-	}
+	})
 	return c.cloudDo(ctx, key, http.MethodPut, c.HeartbeatsURL+"/v1/api/heartbeat-monitors/"+url.PathEscape(uuid), body, nil)
 }
 
