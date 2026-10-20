@@ -46,4 +46,4 @@ Ping monitors send three ICMP echo requests and are up if any reply comes back. 
 
 ## User-Agent
 
-The agent identifies itself as `uptimy-agent/<version>` (e.g. `uptimy-agent/0.2.0`) on its checks, alert webhooks and calls to Uptimy. To let it through a firewall or WAF, allow that; a monitor's own `User-Agent` header replaces it. It's deliberately unlike Uptimy Cloud's checkers (`upti.my-healthcheck/1.0`), so blocking agents someone else runs never blocks Cloud checks.
+The agent identifies itself as `uptimy-agent/<version>` (e.g. `uptimy-agent/0.3.0`) on its checks, alert webhooks and calls to Uptimy. To let it through a firewall or WAF, allow that; a monitor's own `User-Agent` header replaces it. It's deliberately unlike Uptimy Cloud's checkers (`upti.my-healthcheck/1.0`), so blocking agents someone else runs never blocks Cloud checks.
