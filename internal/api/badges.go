@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/uptimy/agent/internal/monitor"
@@ -33,13 +32,6 @@ const (
 	badgeBlue   = "#007ec6"
 	badgeGrey   = "#9f9f9f"
 )
-
-var badgePeriods = map[string]time.Duration{
-	"24h": 24 * time.Hour,
-	"7d":  7 * 24 * time.Hour,
-	"30d": 30 * 24 * time.Hour,
-	"90d": 90 * 24 * time.Hour,
-}
 
 func (s *Server) badgeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /badge/status.svg", s.overallBadge)
@@ -86,29 +78,18 @@ func (s *Server) uptimeBadge(w http.ResponseWriter, r *http.Request) {
 	if period == "" {
 		period = "30d"
 	}
-	d, ok := badgePeriods[period]
-	if !ok {
+	if _, ok := periodDays[period]; !ok && period != "24h" {
 		writeBadge(w, r, http.StatusBadRequest, "period", "use 24h, 7d, 30d or 90d", badgeGrey)
 		return
 	}
-	since := time.Now().Add(-d)
 	label := "uptime " + period
-	var ratio *float64
 	if m.Kind == monitor.KindHeartbeat {
 		label = "on time " + period
-		st, err := s.Store.RunStatsSince(r.Context(), m.ID, since)
-		if err != nil {
-			s.internalError(w, r, err)
-			return
-		}
-		ratio = st.Ratio
-	} else {
-		u, err := s.Store.UptimeSince(r.Context(), m.ID, since)
-		if err != nil {
-			s.internalError(w, r, err)
-			return
-		}
-		ratio = u.Ratio
+	}
+	ratio, err := s.ratio(r.Context(), m, period)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
 	}
 	if ratio == nil {
 		writeBadge(w, r, http.StatusOK, label, "no data", badgeGrey)

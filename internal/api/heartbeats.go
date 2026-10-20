@@ -50,7 +50,8 @@ func (s *Server) summarizeHeartbeat(r *http.Request, m monitor.Monitor) (heartbe
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return sum, err
 	}
-	sum.Stats30d, err = s.Store.RunStatsSince(r.Context(), m.ID, time.Now().AddDate(0, 0, -30))
+	h, err := s.Store.History(r.Context(), m.ID, 30)
+	sum.Stats30d = h.RunStats()
 	return sum, err
 }
 
@@ -86,17 +87,19 @@ func (s *Server) getHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stats := map[string]store.RunStats{}
-	for label, d := range map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour} {
-		if stats[label], err = s.Store.RunStatsSince(r.Context(), m.ID, time.Now().Add(-d)); err != nil {
-			s.internalError(w, r, err)
-			return
-		}
+	if stats["24h"], err = s.Store.RunStatsSince(r.Context(), m.ID, time.Now().Add(-24*time.Hour)); err != nil {
+		s.internalError(w, r, err)
+		return
 	}
-	daily, err := s.Store.DailyOnTime(r.Context(), m.ID, 30)
+	history, err := s.Store.History(r.Context(), m.ID, 90)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
+	for label, days := range periodDays {
+		stats[label] = history.Last(days).RunStats()
+	}
+	daily := history.Last(30)
 	// The next three runs, starting with the one being waited for.
 	upcoming := []time.Time{}
 	if due := sum.Tracking.DueAt; !due.IsZero() {

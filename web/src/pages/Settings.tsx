@@ -52,7 +52,10 @@ export function Settings() {
                         : "Loaded"
                   }
                 />
-                <Row label="Data retention" value={`${i.retention_days} days`} />
+                <Row
+                  label="Data retention"
+                  value={`Every check ${i.retention_days} days · daily history ${i.history_days} days`}
+                />
                 <Row
                   label="Status page"
                   value={

@@ -2,6 +2,8 @@
 
 The status page is public at `/status`, or on its own domain (`status.example.com`), which serves only the status page so sign-in and the dashboard stay private. Set a logo (with a dark-mode version), an accent color and a website link, group monitors into sections with public names, and preview it as you go. New monitors stay off the page until you add them, and it never shows targets or internal hostnames.
 
+Each monitor shows one bar a day and its uptime (a heartbeat's on-time rate) over 30, 60 or 90 days, set under **Days of history** (90 by default; phones show the last 30, tablets up to 60). Days are UTC. Checks during a public maintenance window don't count towards uptime, here or anywhere else, so planned work doesn't read as downtime.
+
 ## Maintenance
 
 Schedule maintenance under **Maintenance** before deploys, upgrades or migrations: for all monitors or some, starting now or later. During the window the monitors keep being checked, but nobody is alerted. If one is still down when the window ends, its alert goes out then, even if the agent restarted in between; if it recovered, nothing is sent. Public windows are announced on the status page up to a week ahead and stay listed as completed for a week after, and the affected monitors are marked as under maintenance rather than down.

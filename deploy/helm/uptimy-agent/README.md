@@ -97,7 +97,8 @@ ingress:
 | `existingSecret` | `""` | Secret with key `ADMIN_PASSWORD` instead of `adminPassword` |
 | `agentName` | release name | How the agent is labeled in Uptimy |
 | `healthchecks` / `heartbeats` | `[]` | Monitors defined in values |
-| `retentionDays` | `30` | How long check results are kept |
+| `retentionDays` | `30` | How long every check result and heartbeat run is kept |
+| `historyDays` | `400` | How long daily history (uptime and response times per day) is kept; at least 90 |
 | `trustedProxies` | `private` | Proxies whose `X-Forwarded-For`/`-Proto` headers are believed: `private`, addresses or CIDRs, or `none` |
 | `metrics.serviceMonitor.enabled` | `false` | Create a Prometheus Operator ServiceMonitor for `/metrics` |
 | `metrics.serviceMonitor.tokenSecret.name` / `.key` | `""` / `token` | Secret with an agent API token (read-only is enough); required when enabled |

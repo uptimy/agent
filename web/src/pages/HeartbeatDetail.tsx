@@ -76,7 +76,7 @@ export function HeartbeatDetail() {
           <CardTitle>On-time runs</CardTitle>
           <span className="text-xs text-muted-foreground tabular-nums">
             24h {formatUptime(stats["24h"].ratio)} · 7d {formatUptime(stats["7d"].ratio)} · 30d{" "}
-            {formatUptime(stats["30d"].ratio)}
+            {formatUptime(stats["30d"].ratio)} · 90d {formatUptime(stats["90d"].ratio)}
           </span>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">

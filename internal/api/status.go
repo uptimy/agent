@@ -14,8 +14,6 @@ import (
 	"github.com/uptimy/agent/internal/store"
 )
 
-const statusPageDays = 30
-
 // publicMonitor deliberately omits the target: in-cluster targets are
 // internal hostnames that shouldn't leak onto a public page.
 type publicMonitor struct {
@@ -27,8 +25,8 @@ type publicMonitor struct {
 	// Ratio is how well it did over the period: a healthcheck's uptime, or
 	// the share of a heartbeat's runs that succeeded on time. Days is the
 	// same per day.
-	Ratio *float64      `json:"ratio"`
-	Days  []store.Daily `json:"days"`
+	Ratio *float64   `json:"ratio"`
+	Days  store.Days `json:"days"`
 	// LastRun is when a heartbeat's job last finished.
 	LastRun *time.Time `json:"last_run,omitempty"`
 	// InMaintenance is set during a public maintenance window.
@@ -97,7 +95,6 @@ func (s *Server) publicStatus(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	since := time.Now().Add(-statusPageDays * 24 * time.Hour)
 	names := map[int64]string{}
 	bySection := map[string][]publicMonitor{}
 	anyDown := false
@@ -113,7 +110,7 @@ func (s *Server) publicStatus(w http.ResponseWriter, r *http.Request) {
 			s.internalError(w, r, err)
 			return
 		}
-		if err := s.publicHistory(r, m, since, &pm); err != nil {
+		if err := s.publicHistory(r, m, settings.HistoryDays, &pm); err != nil {
 			s.internalError(w, r, err)
 			return
 		}
@@ -331,20 +328,16 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// publicHistory fills in how a monitor did over the period, in the measure
-// that fits its kind.
-func (s *Server) publicHistory(r *http.Request, m monitor.Monitor, since time.Time, pm *publicMonitor) error {
+// publicHistory fills in how a monitor did over the page's days, in the
+// measure that fits its kind.
+func (s *Server) publicHistory(r *http.Request, m monitor.Monitor, days int, pm *publicMonitor) error {
 	ctx := r.Context()
 	var err error
+	if pm.Days, err = s.Store.History(ctx, m.ID, days); err != nil {
+		return err
+	}
 	if m.Kind == monitor.KindHeartbeat {
-		if pm.Days, err = s.Store.DailyOnTime(ctx, m.ID, statusPageDays); err != nil {
-			return err
-		}
-		stats, err := s.Store.RunStatsSince(ctx, m.ID, since)
-		if err != nil {
-			return err
-		}
-		pm.Ratio = stats.Ratio
+		pm.Ratio = pm.Days.RunStats().Ratio
 		if last, err := s.Store.LastRun(ctx, m.ID); err == nil {
 			pm.LastRun = last.FinishedAt
 		} else if !store.IsNotFound(err) {
@@ -352,12 +345,8 @@ func (s *Server) publicHistory(r *http.Request, m monitor.Monitor, since time.Ti
 		}
 		return nil
 	}
-	if pm.Days, err = s.Store.DailyUptimes(ctx, m.ID, statusPageDays); err != nil {
-		return err
-	}
-	u, err := s.Store.UptimeSince(ctx, m.ID, since)
-	pm.Ratio = u.Ratio
-	return err
+	pm.Ratio = pm.Days.Uptime().Ratio
+	return nil
 }
 
 // publicMaintenanceCovers reports whether a public window covers a monitor

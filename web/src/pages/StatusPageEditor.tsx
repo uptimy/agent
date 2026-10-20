@@ -19,7 +19,7 @@ import { CopyButton } from "@/components/ui/copy-button";
 import { api, type StatusPageConfig, type StatusPageLogos } from "@/lib/api";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, Input, Switch, Textarea } from "@/components/ui/input";
+import { Field, Input, Select, Switch, Textarea } from "@/components/ui/input";
 import { toast } from "@/components/ui/toast";
 import { ErrorNote, PageHeader } from "@/components/Layout";
 import { useCanEdit } from "@/components/AuthGate";
@@ -52,6 +52,7 @@ export function StatusPageEditor() {
         title: d.title,
         description: d.description,
         show_events: d.show_events,
+        history_days: d.history_days,
         accent_color: d.accent_color,
         website_url: d.website_url,
         domain: d.domain,
@@ -200,6 +201,23 @@ export function StatusPageEditor() {
                             onChange={(v) => set("show_events", v)}
                             label={<span className="sr-only">Recent events</span>}
                           />
+                        </SettingRow>
+                        <SettingRow
+                          title="Days of history"
+                          description="Daily bars per monitor, and the period of its uptime. Phones show 30, tablets up to 60."
+                        >
+                          <Select
+                            aria-label="Days of history"
+                            className="w-28"
+                            value={draft.history_days}
+                            onChange={(e) => set("history_days", Number(e.target.value) as 30 | 60 | 90)}
+                          >
+                            {[30, 60, 90].map((n) => (
+                              <option key={n} value={n}>
+                                {n} days
+                              </option>
+                            ))}
+                          </Select>
                         </SettingRow>
                       </CardContent>
                     </Card>

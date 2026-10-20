@@ -111,6 +111,7 @@ SQLite through `modernc.org/sqlite` (pure Go, so the binary builds without cgo),
 | Alert channels | `notifiers` | `notify.Notifier` |
 | Healthchecks, heartbeats | `monitors` + `healthchecks` / `heartbeats` | `monitor.Monitor` |
 | History | `results`, `runs`, `events` | `monitor.Result`, `monitor.Run`, `monitor.Event` |
+| Daily history | `daily_rollups` (+ the `rollups_through` setting) | `store.Daily` |
 | Alert routing | `notifiers.all_monitors` + `notifier_monitors` | `notify.Notifier` (`AllMonitors`, `MonitorIDs`) |
 | Alerts and their delivery to each channel (the outbox) | `alerts` + `alert_deliveries` | `notify.Alert`, `notify.Delivery` |
 | Who's on an outage | `acknowledgements` | `monitor.Acknowledgement` |
@@ -129,6 +130,15 @@ Environment variables don't hold data. They set how the process runs (`PORT`, `D
 
 - `ADMIN_PASSWORD` creates the first admin and resets that admin's password on every start (the recovery path). The UI won't change a password the environment sets.
 - `MONITORS_FILE` / `MONITORS_YAML` declare monitors. They're synced into the database on start, matched by name, and read-only in the UI. A file that doesn't parse is held back whole and invalid monitors are skipped (`filesync.Apply`); the problem goes to the log and `/api/info`, never stops the agent.
+
+### History over time
+
+Raw `results` and `runs` are kept `RETENTION_DAYS`. Each completed UTC day is also rolled up into one `daily_rollups` row per monitor, kept `HISTORY_DAYS`: counts (checks or due runs, good, failed, missed) and response times (sum, count, p50, p95, p99, max), never ratios, so any range of days sums exactly (`store.History`). The `rollups_through` setting is the newest day rolled up; readers take days up to it from rollups and later ones, today included, from raw. The last 24 hours are always raw. Windows longer than that are whole UTC days, today included.
+
+- **The rollup** runs hourly with pruning (`Rollup`, then `Prune`), so the first pass after midnight rolls up the day before, and the first after an upgrade every day still in raw.
+- **Pruning never deletes raw rows that aren't rolled up yet**, whatever `RETENTION_DAYS` says. Maintenance windows are kept as long as the raw rows they cover.
+- **Late writes roll a day up again:** a check started before midnight and saved after it, a run found missed once its grace ran out, a late finish moving a run to another day, or a maintenance window saved or deleted. Only days still fully in raw are redone (`raw_from`); an older day keeps its rollup.
+- **Public maintenance doesn't count towards uptime:** checks and runs inside a public window that covers the monitor are left out of the counts (raw and rolled up alike), but not out of response times.
 
 ## The UI
 
