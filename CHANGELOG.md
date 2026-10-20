@@ -4,7 +4,16 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+### Added
+- **History that's true past `RETENTION_DAYS`.** Each monitor's day is rolled up into one row (uptime or on-time rate, and response times p50/p95/p99/max) when it ends, and kept for `HISTORY_DAYS` (400 by default; Helm `historyDays`). Uptime over 7, 30 and 90 days, the status page's bars and the 90-day badge are now exact even when every check is kept for only 30 days: before, the 90d badge and anything older than `RETENTION_DAYS` quietly covered only the days still kept. On upgrade, every day still in the database is rolled up on the first start.
+- **The status page shows 30, 60 or 90 days** (**Days of history** in the editor; 90 by default, so pages that showed 30 bars now show up to 90). Each monitor's uptime next to its bars covers the same days.
+- **Response time over 30 and 90 days** on a healthcheck's page: the daily median with a band up to the 95th percentile. Uptime 90d next to 7d and 30d, and a heartbeat's on-time rate over 90 days.
+- `GET /api/healthchecks/{id}/daily?days=90`: a healthcheck's days with uptime and response time percentiles.
+
 ### Changed
+- **Checks during public maintenance don't count towards uptime** (or a heartbeat's on-time rate), wherever it's shown: the status page, badges, the monitor pages. Planned work announced on the status page no longer reads as downtime. Private windows still only silence alerts. Response times still include those checks.
+- Uptime over 7, 30 and 90 days covers whole UTC days, today included, as the status page's bars do; 24 hours is still the last 24 hours.
+- Raw results and runs of days that haven't been rolled up yet are never pruned, whatever their age.
 - **The status page matches Uptimy's hosted status pages.** Each section is one frame of compact rows: a monitor shows its status, uptime and daily bars in one row (fewer on narrow screens), and only monitors that are down or in maintenance get a colored edge. Incidents and maintenance are rows too, with their timeline oldest first and a final **Resolved** step. Day tooltips are restyled, and a loading placeholder keeps the page's shape.
 - The banner follows hosted pages' order: an open high incident is now an outage (before, only critical), and maintenance in progress now shows over a lower-severity incident.
 - **Cron heartbeats keep their schedule in Uptimy Cloud.** Cloud shows the cron expression and time zone instead of an interval guessed from the next two runs, which was wrong for schedules like weekdays only.

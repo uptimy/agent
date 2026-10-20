@@ -27,7 +27,10 @@ type Config struct {
 	MonitorsFile string
 	MonitorsYAML string
 
+	// RetentionDays is how long raw results and runs are kept; HistoryDays
+	// how long their daily rollups are.
 	RetentionDays int
+	HistoryDays   int
 
 	// TrustedProxies are the addresses whose X-Forwarded-For and
 	// X-Forwarded-Proto headers are believed: who the client is (for sign-in
@@ -90,6 +93,13 @@ func Load() (Config, error) {
 	}
 	if c.RetentionDays < 1 {
 		return c, fmt.Errorf("RETENTION_DAYS must be at least 1")
+	}
+	if c.HistoryDays, err = envInt("HISTORY_DAYS", 400); err != nil {
+		return c, err
+	}
+	// Status pages, badges and monitor pages show up to 90 days.
+	if c.HistoryDays < 90 {
+		return c, fmt.Errorf("HISTORY_DAYS must be at least 90")
 	}
 	if c.TrustedProxies, err = ParseTrustedProxies(env("TRUSTED_PROXIES", "private")); err != nil {
 		return c, fmt.Errorf("TRUSTED_PROXIES: %w", err)

@@ -100,11 +100,20 @@ export interface ActivityItem extends MonitorEvent {
   kind: MonitorKind;
 }
 
-/** One day of history: the share of checks that were up, or of runs on time. */
+/**
+ * One UTC day of history: the share of checks that were up, or of runs on
+ * time. The response times are of checks that were up (run durations for
+ * heartbeats), present on days that have any.
+ */
 export interface Daily {
   date: string;
   count: number;
   ratio: number | null;
+  avg_ms?: number;
+  p50_ms?: number;
+  p95_ms?: number;
+  p99_ms?: number;
+  max_ms?: number;
 }
 
 // ── Healthchecks ──────────────────────────────────────────────────────────
@@ -147,7 +156,8 @@ interface Uptime {
 
 export interface HealthcheckDetail {
   healthcheck: HealthcheckSummary;
-  uptime: Record<"24h" | "7d" | "30d", Uptime>;
+  /** 24h is the last 24 hours; 7d, 30d and 90d are whole UTC days, today included. */
+  uptime: Record<"24h" | "7d" | "30d" | "90d", Uptime>;
   notifier_ids: number[]; // the channels limited to some monitors that include this one
 }
 
@@ -214,7 +224,7 @@ export interface HeartbeatSummary extends Heartbeat {
 
 export interface HeartbeatDetail {
   heartbeat: HeartbeatSummary;
-  stats: Record<"24h" | "7d" | "30d", RunStats>;
+  stats: Record<"24h" | "7d" | "30d" | "90d", RunStats>;
   daily: Daily[];
   upcoming: string[];
   notifier_ids: number[];
@@ -403,6 +413,7 @@ export interface Info {
   /** What was wrong with the monitors file at startup; null when nothing. */
   monitors_file_error: MonitorsFileProblem | null;
   retention_days: number;
+  history_days: number;
 }
 
 /** A monitors file with problems: held back entirely, or applied without the monitors in errors. */
@@ -579,6 +590,8 @@ export interface StatusPageSettings {
   website_url: string;
   /** A hostname that serves only the status page, e.g. status.example.com. */
   domain: string;
+  /** Days of bars, at most (fewer on narrow screens), and the period of each monitor's uptime. */
+  history_days: 30 | 60 | 90;
   sections: StatusSection[];
 }
 
@@ -686,6 +699,7 @@ export const api = {
   updateHealthcheck: (id: number, h: HealthcheckInput) => request<Healthcheck>("PUT", `/api/healthchecks/${id}`, h),
   checkNow: (id: number) => request<void>("POST", `/api/healthchecks/${id}/check`),
   results: (id: number, hours: number) => request<Result[]>("GET", `/api/healthchecks/${id}/results?hours=${hours}`),
+  daily: (id: number, days: number) => request<Daily[]>("GET", `/api/healthchecks/${id}/daily?days=${days}`),
 
   heartbeats: () => request<HeartbeatSummary[]>("GET", "/api/heartbeats"),
   heartbeat: (id: number) => request<HeartbeatDetail>("GET", `/api/heartbeats/${id}`),

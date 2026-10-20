@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver: no CGO, so static builds and distroless images work
@@ -23,6 +24,9 @@ type Store struct {
 	// channels an upgrade dropped), for the startup log. Empty after the
 	// first start on a version.
 	Removed []string
+	// rollupMu keeps rolling up and rolling up again after a late write
+	// from interleaving.
+	rollupMu sync.Mutex
 }
 
 // Open opens (and creates, if needed) the database at path and migrates it.
@@ -311,6 +315,26 @@ var migrations = []string{
 	`ALTER TABLE runs ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
 	UPDATE runs SET seq = id;
 	CREATE INDEX runs_seq ON runs(seq);`,
+
+	// 10: one row per monitor and completed UTC day, kept HISTORY_DAYS (see
+	// history.go). Counts, not ratios, so ranges of days sum exactly. For
+	// heartbeats count is the runs that were due and good the ones on time;
+	// the latencies are run durations.
+	`CREATE TABLE daily_rollups (
+		monitor_id INTEGER NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+		date TEXT NOT NULL,
+		count INTEGER NOT NULL,
+		good INTEGER NOT NULL,
+		failed INTEGER NOT NULL DEFAULT 0,
+		missed INTEGER NOT NULL DEFAULT 0,
+		latency_sum INTEGER NOT NULL DEFAULT 0,
+		latency_n INTEGER NOT NULL DEFAULT 0,
+		p50 INTEGER,
+		p95 INTEGER,
+		p99 INTEGER,
+		max INTEGER,
+		PRIMARY KEY (monitor_id, date)
+	) WITHOUT ROWID;`,
 }
 
 // migrationNotes, by migration number, say what a migration is about to
@@ -380,14 +404,44 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
-// Prune deletes history (results, runs, events) older than before.
-func (s *Store) Prune(ctx context.Context, before time.Time) error {
-	ms := before.UnixMilli()
-	for _, table := range []string{"results", "runs"} {
-		if _, err := s.db.ExecContext(ctx, "DELETE FROM "+table+" WHERE ts < ?", ms); err != nil { //nolint:gosec // G202: table names are constants
+// Prune deletes raw history (results, runs, events) older than rawBefore
+// and daily rollups older than historyBefore. Raw rows of days that aren't
+// rolled up yet are kept, whatever their age: they're the only record of
+// those days.
+func (s *Store) Prune(ctx context.Context, rawBefore, historyBefore time.Time) error {
+	s.rollupMu.Lock()
+	defer s.rollupMu.Unlock()
+	through, err := s.rolledThrough(ctx)
+	if err != nil {
+		return err
+	}
+	// Until the first rollup, all raw history and maintenance is kept.
+	if !through.IsZero() {
+		cut := earlier(rawBefore.UTC(), through.Add(day))
+		ms := cut.UnixMilli()
+		for _, table := range []string{"results", "runs"} {
+			if _, err := s.db.ExecContext(ctx, "DELETE FROM "+table+" WHERE ts < ?", ms); err != nil { //nolint:gosec // G202: table names are constants
+				return err
+			}
+		}
+		// Windows are kept as long as the raw rows they cover, which a late
+		// write can roll up again.
+		if _, err := s.db.ExecContext(ctx, "DELETE FROM maintenance WHERE ends_at < ?", ms); err != nil {
 			return err
 		}
+		if from, err := s.rawFrom(ctx); err != nil {
+			return err
+		} else if cut.After(from) {
+			if err := setSetting(ctx, s.db, keyRawFrom, cut.Format(time.RFC3339Nano)); err != nil {
+				return err
+			}
+		}
 	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM daily_rollups WHERE date < ?",
+		historyBefore.UTC().Format(dateLayout)); err != nil {
+		return err
+	}
+	ms := rawBefore.UnixMilli()
 	// A monitor's newest event is its current status, which a restart
 	// restores: keep it however old, or a monitor down for longer than the
 	// retention would come back pending and alert again.
@@ -400,10 +454,7 @@ func (s *Store) Prune(ctx context.Context, before time.Time) error {
 		(SELECT 1 FROM alert_deliveries WHERE alert_id = alerts.id AND state IN ('pending', 'held'))`, ms); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, "DELETE FROM maintenance WHERE ends_at < ?", ms); err != nil {
-		return err
-	}
-	_, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at < ?", time.Now().UnixMilli())
+	_, err = s.db.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at < ?", time.Now().UnixMilli())
 	return err
 }
 

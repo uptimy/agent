@@ -1,9 +1,19 @@
 import { useState } from "react";
 import { useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { RefreshCw } from "lucide-react";
-import { api, type Result, type Status } from "@/lib/api";
+import { api, type Daily, type Result, type Status } from "@/lib/api";
 import { cn, formatInterval, formatLatency, formatUptime, timeAgo } from "@/lib/utils";
 import { useCheckTypeLabel } from "@/lib/types";
 import { toast } from "@/components/ui/toast";
@@ -15,11 +25,16 @@ import { ResultBars, StatusDot, StatusLabel } from "@/components/status";
 import { BackLink, EventsCard, MonitorActions, Stat } from "@/components/MonitorPage";
 import { AcknowledgedBadge, managedBadge } from "@/components/MonitorEmpty";
 
+// Up to 7 days every check is shown; longer ranges are one point a day, from
+// the daily history (kept longer than every check).
 const ranges = [
   { hours: 1, label: "1h" },
   { hours: 24, label: "24h" },
   { hours: 24 * 7, label: "7d" },
+  { hours: 24 * 30, label: "30d" },
+  { hours: 24 * 90, label: "90d" },
 ];
+const dailyFrom = 24 * 30;
 
 const statusWords: Record<Status, string> = { up: "Up", down: "Down", pending: "Pending", paused: "Paused" };
 
@@ -30,9 +45,16 @@ export function HealthcheckDetail() {
   const qc = useQueryClient();
 
   const detail = useQuery({ queryKey: ["healthcheck", id], queryFn: () => api.healthcheck(id) });
+  const daily = hours >= dailyFrom;
   const results = useQuery({
     queryKey: ["healthcheck", id, "results", hours],
     queryFn: () => api.results(id, hours),
+    enabled: !daily,
+  });
+  const days = useQuery({
+    queryKey: ["healthcheck", id, "daily", hours / 24],
+    queryFn: () => api.daily(id, hours / 24),
+    enabled: daily,
   });
   const checkNow = useMutation({
     mutationFn: () => api.checkNow(id),
@@ -88,7 +110,7 @@ export function HealthcheckDetail() {
         <Stat
           label="Uptime 7d"
           value={formatUptime(uptime["7d"].ratio)}
-          sub={`30d: ${formatUptime(uptime["30d"].ratio)}`}
+          sub={`30d: ${formatUptime(uptime["30d"].ratio)} · 90d: ${formatUptime(uptime["90d"].ratio)}`}
         />
         <Stat
           label="Avg response 24h"
@@ -118,7 +140,7 @@ export function HealthcheckDetail() {
         </CardHeader>
         <CardContent>
           <ResultBars results={h.recent} slots={40} />
-          <LatencyChart data={results.data ?? []} />
+          {daily ? <DailyLatencyChart days={days.data ?? []} /> : <LatencyChart data={results.data ?? []} />}
         </CardContent>
       </Card>
 
@@ -186,6 +208,93 @@ function LatencyChart({ data }: { data: Result[] }) {
             isAnimationActive={false}
           />
         </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/** One point a day: the median response time, in a band up to the 95th percentile. */
+function DailyLatencyChart({ days }: { days: Daily[] }) {
+  const points = days.map((d) => ({
+    t: Date.parse(`${d.date}T00:00:00Z`),
+    p50: d.p50_ms ?? null,
+    band: d.p50_ms != null && d.p95_ms != null ? [d.p50_ms, d.p95_ms] : null,
+    p95: d.p95_ms ?? null,
+  }));
+  if (points.filter((p) => p.p50 != null).length < 2) {
+    return <p className="mt-6 text-sm text-muted-foreground">Not enough data yet.</p>;
+  }
+  return (
+    <div className="mt-6 h-56">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={points} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+          <CartesianGrid stroke="var(--border)" vertical={false} />
+          <XAxis
+            dataKey="t"
+            type="number"
+            scale="time"
+            domain={["dataMin", "dataMax"]}
+            tickFormatter={(t) =>
+              new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })
+            }
+            stroke="var(--muted-foreground)"
+            fontSize={11}
+            tickLine={false}
+            axisLine={false}
+            minTickGap={40}
+          />
+          <YAxis
+            stroke="var(--muted-foreground)"
+            fontSize={11}
+            tickLine={false}
+            axisLine={false}
+            width={48}
+            tickFormatter={(v) => formatLatency(v)}
+          />
+          <Tooltip
+            contentStyle={{
+              background: "var(--card)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              fontSize: 12,
+            }}
+            labelFormatter={(t) =>
+              new Date(t as number).toLocaleDateString(undefined, { dateStyle: "medium", timeZone: "UTC" }) + " (UTC)"
+            }
+            formatter={(v, name) => [formatLatency(v as number), name === "p50" ? "Median" : "95th percentile"]}
+          />
+          <Area
+            type="monotone"
+            dataKey="band"
+            tooltipType="none"
+            stroke="none"
+            fill="var(--up)"
+            fillOpacity={0.15}
+            connectNulls={false}
+            isAnimationActive={false}
+            activeDot={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="p50"
+            stroke="var(--up)"
+            strokeWidth={1.5}
+            dot={false}
+            connectNulls={false}
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="p95"
+            stroke="var(--up)"
+            strokeOpacity={0.5}
+            strokeDasharray="3 3"
+            strokeWidth={1}
+            dot={false}
+            connectNulls={false}
+            isAnimationActive={false}
+          />
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );

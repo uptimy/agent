@@ -123,7 +123,7 @@ func run(log *slog.Logger) error {
 		}, sched.Report)
 	}
 
-	go prune(ctx, st, cfg.RetentionDays, log)
+	go history(ctx, st, cfg.RetentionDays, cfg.HistoryDays, log)
 
 	// Uptimy Cloud sync, for a "Connect to Uptimy Cloud" connection: its
 	// uploads are also the agent's check-in.
@@ -231,11 +231,18 @@ func syncMonitorsFile(ctx context.Context, cfg config.Config, st *store.Store, l
 	return p, nil
 }
 
-func prune(ctx context.Context, st *store.Store, days int, log *slog.Logger) {
+// history rolls up each completed day, then prunes what's past its
+// retention, every hour: the first run after midnight UTC rolls up the day
+// before, and the first after an upgrade every day still in raw history.
+func history(ctx context.Context, st *store.Store, rawDays, historyDays int, log *slog.Logger) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {
-		if err := st.Prune(ctx, time.Now().AddDate(0, 0, -days)); err != nil && ctx.Err() == nil {
+		now := time.Now()
+		if err := st.Rollup(ctx, now); err != nil && ctx.Err() == nil {
+			log.Error("rolling up daily history", "err", err)
+		}
+		if err := st.Prune(ctx, now.AddDate(0, 0, -rawDays), now.AddDate(0, 0, -historyDays)); err != nil && ctx.Err() == nil {
 			log.Error("pruning old data", "err", err)
 		}
 		select {

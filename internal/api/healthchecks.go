@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/uptimy/agent/internal/monitor"
-	"github.com/uptimy/agent/internal/store"
 )
 
 // recentResults is how many results a summary includes, for the result bars.
@@ -83,12 +82,10 @@ func (s *Server) getHealthcheck(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	uptime := map[string]store.Uptime{}
-	for label, d := range map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour} {
-		if uptime[label], err = s.Store.UptimeSince(r.Context(), m.ID, time.Now().Add(-d)); err != nil {
-			s.internalError(w, r, err)
-			return
-		}
+	uptime, err := s.healthcheckUptimes(r.Context(), m.ID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
 	}
 	alerts, err := s.Store.MonitorNotifierIDs(r.Context(), m.ID)
 	if err != nil {
@@ -166,4 +163,23 @@ func (s *Server) healthcheckResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, results)
+}
+
+// healthcheckDaily is a healthcheck's last days UTC days (30 or 90, today
+// included): uptime and response time percentiles, for the charts.
+func (s *Server) healthcheckDaily(w http.ResponseWriter, r *http.Request) {
+	m, ok := s.loadMonitor(w, r, monitor.KindHealthcheck)
+	if !ok {
+		return
+	}
+	days, err := strconv.Atoi(r.URL.Query().Get("days"))
+	if err != nil || days < 1 || days > 90 {
+		days = 30
+	}
+	h, err := s.Store.History(r.Context(), m.ID, days)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, h)
 }

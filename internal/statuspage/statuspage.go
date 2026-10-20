@@ -34,6 +34,10 @@ type Settings struct {
 	// status page: at "/", with no sign-in, API or metrics. Pointing it at the
 	// agent (DNS, TLS, an Ingress) is up to whoever runs it. Empty = none.
 	Domain string `json:"domain"`
+	// HistoryDays is how many days of bars the page shows at most (fewer on
+	// narrow screens), and the period of the uptime next to each monitor:
+	// 30, 60 or 90; 0 when saving means 90.
+	HistoryDays int `json:"history_days"`
 	// Sections group monitors, in display order. A monitor on the page with
 	// no (known) section goes in the first; with no sections, nothing shows.
 	Sections []Section `json:"sections"`
@@ -49,10 +53,11 @@ type Section struct {
 // section, so a new agent has a working status page right away.
 func Defaults() Settings {
 	return Settings{
-		Enabled:    true,
-		Title:      "Service Status",
-		ShowEvents: true,
-		Sections:   []Section{{ID: "services", Name: "Services"}},
+		Enabled:     true,
+		Title:       "Service Status",
+		ShowEvents:  true,
+		HistoryDays: 90,
+		Sections:    []Section{{ID: "services", Name: "Services"}},
 	}
 }
 
@@ -69,6 +74,9 @@ func (p *Settings) Validate() error {
 	p.AccentColor = strings.ToLower(strings.TrimSpace(p.AccentColor))
 	p.WebsiteURL = strings.TrimSpace(p.WebsiteURL)
 	p.Domain = NormalizeHost(p.Domain)
+	if p.HistoryDays == 0 {
+		p.HistoryDays = Defaults().HistoryDays
+	}
 	switch {
 	case p.Title == "":
 		return errors.New("the status page needs a title")
@@ -78,6 +86,8 @@ func (p *Settings) Validate() error {
 		return errors.New("the accent color must look like #33a36b")
 	case p.Domain != "" && (len(p.Domain) > 253 || !hostname.MatchString(p.Domain)):
 		return errors.New("the domain must be a hostname like status.example.com, without https:// or a path")
+	case p.HistoryDays != 30 && p.HistoryDays != 60 && p.HistoryDays != 90:
+		return errors.New("show 30, 60 or 90 days of history")
 	case len(p.Sections) > 20:
 		return errors.New("use at most 20 sections")
 	}

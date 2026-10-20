@@ -37,7 +37,7 @@ GET and POST both work. A POST body (say, the end of the job's log) is kept with
 
 - **Schedule:** a fixed interval (`every: 6h`) or a cron expression with a time zone (`cron: "0 3 * * *"`, `timezone: Europe/Berlin`), so daylight saving time is handled.
 - **Grace period:** how late a run may be before it counts as missed (5 minutes by default). You're alerted when a run is missed or a job reports a failure, and again when it's back on schedule.
-- **History:** each run is kept with its result, how long it took and its message; the heartbeat's page shows the on-time rate over 24 hours, 7 days and 30 days.
+- **History:** each run is kept with its result, how long it took and its message; the heartbeat's page shows the on-time rate over 24 hours, 7, 30 and 90 days.
 - **Ping URLs** are generated and stay the same when you edit the heartbeat. Replace one from its page if it leaks. In YAML, set `token` to pin it (16 to 64 letters, digits, `-` or `_`); otherwise one is generated and kept.
 
 ## Ping

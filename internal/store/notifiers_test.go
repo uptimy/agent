@@ -104,7 +104,7 @@ func TestPruneKeepsCurrentStatus(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := st.Prune(ctx, time.Now().AddDate(0, 0, -30)); err != nil {
+	if err := st.Prune(ctx, time.Now().AddDate(0, 0, -30), time.Now().AddDate(0, 0, -400)); err != nil {
 		t.Fatal(err)
 	}
 	events, err := st.ListEvents(ctx, m.ID, 10)

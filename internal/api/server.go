@@ -101,6 +101,7 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	auth("POST /api/healthchecks/{id}/acknowledge", s.acknowledgeMonitor(monitor.KindHealthcheck))
 	auth("POST /api/healthchecks/{id}/check", s.checkNow)
 	auth("GET /api/healthchecks/{id}/results", s.healthcheckResults)
+	auth("GET /api/healthchecks/{id}/daily", s.healthcheckDaily)
 
 	auth("GET /api/heartbeats", s.listHeartbeats)
 	auth("POST /api/heartbeats", s.createHeartbeat)
@@ -270,5 +271,6 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		"monitors_file":       s.Config.MonitorsFile != "" || s.Config.MonitorsYAML != "",
 		"monitors_file_error": s.MonitorsFileProblem,
 		"retention_days":      s.Config.RetentionDays,
+		"history_days":        s.Config.HistoryDays,
 	})
 }

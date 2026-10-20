@@ -11,7 +11,8 @@ Environment variables set how the agent runs, its secrets, and (optionally) moni
 | `MONITORS_FILE` | – | Path to a YAML file of monitors |
 | `MONITORS_YAML` | – | The YAML itself, for platforms where mounting files is awkward |
 | `KUBERNETES_DISCOVERY` | `true` | Create monitors for resources labeled `upti.my/monitor: "true"` (see [Auto-discovery](kubernetes.md#auto-discovery)). Only applies inside a cluster |
-| `RETENTION_DAYS` | `30` | How long check results, heartbeat runs, events and alerts are kept. A monitor's current status is kept however old |
+| `RETENTION_DAYS` | `30` | How long every check result, heartbeat run, event and alert is kept. A monitor's current status is kept however old |
+| `HISTORY_DAYS` | `400` | How long each monitor's daily history is kept: one row a day with its uptime (or on-time rate) and response times (p50, p95, p99, max). Uptime over 7, 30 and 90 days, the status page's bars and the 30d and 90d charts come from it, so they stay exact past `RETENTION_DAYS`. At least 90 |
 | `TRUSTED_PROXIES` | `private` | Proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed: who signed in (for the sign-in rate limit) and whether they used HTTPS (for Secure cookies). Comma-separated addresses and ranges (`10.0.0.0/8, 192.0.2.1`), `private` for loopback and private networks (where an Ingress, Railway's edge or a local proxy connects from), or `none` |
 | `AGENT_NAME` | hostname | How this agent is labeled in Uptimy |
 

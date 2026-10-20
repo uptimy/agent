@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/uptimy/agent/internal/monitor"
@@ -42,43 +43,78 @@ func (s *Store) InsertRun(ctx context.Context, r monitor.Run) (monitor.Run, erro
 	if err != nil {
 		return r, err
 	}
-	r.ID, err = res.LastInsertId()
-	return r, err
+	if r.ID, err = res.LastInsertId(); err != nil {
+		return r, err
+	}
+	// A run missed before midnight is recorded after it, once its grace is up.
+	return r, s.changedAt(ctx, r.MonitorID, runTime(r))
 }
 
 // UpdateRun saves a run, e.g. one that was running and has now finished.
 func (s *Store) UpdateRun(ctx context.Context, r monitor.Run) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE runs SET ts = ?, due_at = ?, started_at = ?, finished_at = ?,
+	before, err := s.runTS(ctx, r.ID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE runs SET ts = ?, due_at = ?, started_at = ?, finished_at = ?,
 		outcome = ?, on_time = ?, duration_ms = ?, message = ?, seq = `+nextSeq+` WHERE id = ?`,
 		runTime(r).UnixMilli(), millis(r.DueAt), millis(r.StartedAt), millis(r.FinishedAt),
 		r.Outcome, r.OnTime, r.DurationMS, r.Message, r.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	// A late finish can move a run to another day.
+	if err := s.changedAt(ctx, r.MonitorID, before); err != nil {
+		return err
+	}
+	return s.changedAt(ctx, r.MonitorID, runTime(r))
 }
 
 // DeleteRun removes a run, e.g. a start folded into the run it belonged to.
 func (s *Store) DeleteRun(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM runs WHERE id = ?", id)
-	return err
+	var monitorID, ts int64
+	err := s.db.QueryRowContext(ctx, "SELECT monitor_id, ts FROM runs WHERE id = ?", id).Scan(&monitorID, &ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM runs WHERE id = ?", id); err != nil {
+		return err
+	}
+	return s.changedAt(ctx, monitorID, fromMillis(ts))
+}
+
+// runTS is when a saved run happened (its ts), or zero if it doesn't exist.
+func (s *Store) runTS(ctx context.Context, id int64) (time.Time, error) {
+	var ts int64
+	err := s.db.QueryRowContext(ctx, "SELECT ts FROM runs WHERE id = ?", id).Scan(&ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	return fromMillis(ts), err
 }
 
 // AbandonRuns closes the heartbeat's runs that started and never finished,
 // all but keepID (0 for none): they count as missed, with message. A run
 // left running would show as running for good.
 func (s *Store) AbandonRuns(ctx context.Context, monitorID, keepID int64, message string) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, "SELECT id FROM runs WHERE monitor_id = ? AND outcome = ? AND id != ? ORDER BY id",
+	var times []time.Time
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT id, ts FROM runs WHERE monitor_id = ? AND outcome = ? AND id != ? ORDER BY id",
 			monitorID, monitor.OutcomeRunning, keepID)
 		if err != nil {
 			return err
 		}
 		var ids []int64
 		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
+			var id, ts int64
+			if err := rows.Scan(&id, &ts); err != nil {
 				rows.Close()
 				return err
 			}
 			ids = append(ids, id)
+			times = append(times, fromMillis(ts))
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -93,6 +129,15 @@ func (s *Store) AbandonRuns(ctx context.Context, monitorID, keepID int64, messag
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	for _, t := range times {
+		if err := s.changedAt(ctx, monitorID, t); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // OpenRun returns the heartbeat's run that started and hasn't finished, or
@@ -170,23 +215,18 @@ type RunStats struct {
 	AvgDurationMS *float64 `json:"avg_duration_ms"` // runs that pinged /start
 }
 
-// RunStatsSince summarizes the heartbeat's runs since a time.
+// RunStatsSince summarizes the heartbeat's runs since a time, from raw runs:
+// for the last 24 hours. Longer windows use History.
 func (s *Store) RunStatsSince(ctx context.Context, monitorID int64, since time.Time) (RunStats, error) {
 	var st RunStats
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),
-			COALESCE(SUM(outcome = 'success' AND on_time), 0),
-			COALESCE(SUM(outcome = 'missed'), 0),
-			COALESCE(SUM(outcome = 'failure'), 0),
-			AVG(outcome = 'success' AND on_time),
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FILTER (WHERE NOT maint),
+			COALESCE(SUM(outcome = 'success' AND on_time) FILTER (WHERE NOT maint), 0),
+			COALESCE(SUM(outcome = 'missed') FILTER (WHERE NOT maint), 0),
+			COALESCE(SUM(outcome = 'failure') FILTER (WHERE NOT maint), 0),
+			AVG(outcome = 'success' AND on_time) FILTER (WHERE NOT maint),
 			AVG(duration_ms)
-		FROM runs WHERE monitor_id = ? AND ts >= ? AND outcome != 'running'`,
+		FROM (SELECT x.outcome, x.on_time, x.duration_ms, `+inPublicMaintenance+` AS maint
+			FROM runs x WHERE x.monitor_id = ? AND x.ts >= ? AND x.outcome != 'running')`,
 		monitorID, since.UnixMilli()).Scan(&st.Runs, &st.OnTime, &st.Missed, &st.Failed, &st.Ratio, &st.AvgDurationMS)
 	return st, err
-}
-
-// DailyOnTime returns the share of a heartbeat's runs that succeeded on time,
-// per day for the last days days, oldest first.
-func (s *Store) DailyOnTime(ctx context.Context, monitorID int64, days int) ([]Daily, error) {
-	return s.daily(ctx, days, `SELECT date(ts / 1000, 'unixepoch') AS d, COUNT(*), AVG(outcome = 'success' AND on_time)
-		FROM runs WHERE monitor_id = ? AND ts >= ? AND outcome != 'running' GROUP BY d`, monitorID)
 }

@@ -32,7 +32,10 @@ heartbeats: []
 #    timezone: Europe/Berlin
 #    grace: 30m
 
+# Every check result and heartbeat run is kept retentionDays; one row a
+# day per monitor (uptime, response time percentiles) historyDays.
 retentionDays: 30
+historyDays: 400
 
 # Proxies whose X-Forwarded-For/-Proto headers are believed (sign-in rate
 # limits per client, Secure cookies behind TLS-terminating Ingresses):
