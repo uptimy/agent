@@ -996,19 +996,20 @@ func mirroredHealthcheck(m monitor.Monitor) connect.MirroredHealthcheck {
 	}
 }
 
+// mirroredHeartbeat is the heartbeat as Cloud shows it, schedule included: a
+// cron heartbeat keeps its expression and time zone. Cloud never judges it;
+// the agent reports each run.
 func mirroredHeartbeat(m monitor.Monitor) connect.MirroredHeartbeat {
 	h := m.Heartbeat
-	interval := h.EverySeconds
-	if interval <= 0 {
-		// A cron schedule: the gap between its next two runs.
-		if next := h.Upcoming(time.Now(), 2); len(next) == 2 {
-			interval = int(next[1].Sub(next[0]).Seconds())
-		}
+	mh := connect.MirroredHeartbeat{
+		Name: m.Name, Description: h.Describe(), GraceSeconds: h.GraceSeconds, Paused: m.Paused,
 	}
-	return connect.MirroredHeartbeat{
-		Name: m.Name, Description: h.Describe(),
-		IntervalSeconds: max(interval, 60), GraceSeconds: h.GraceSeconds, Paused: m.Paused,
+	if h.Cron != "" {
+		mh.Cron, mh.Timezone = h.Cron, h.Timezone
+	} else {
+		mh.IntervalSeconds = h.EverySeconds
 	}
+	return mh
 }
 
 // definitionHash is what decides whether a mirror needs sending again.
