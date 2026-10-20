@@ -4,6 +4,8 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-20
+
 ### Added
 - **History that's true past `RETENTION_DAYS`.** Each monitor's day is rolled up into one row (uptime or on-time rate, and response times p50/p95/p99/max) when it ends, and kept for `HISTORY_DAYS` (400 by default; Helm `historyDays`). Uptime over 7, 30 and 90 days, the status page's bars and the 90-day badge are now exact even when every check is kept for only 30 days: before, the 90d badge and anything older than `RETENTION_DAYS` quietly covered only the days still kept. On upgrade, every day still in the database is rolled up on the first start.
 - **The status page shows 30, 60 or 90 days** (**Days of history** in the editor; 90 by default, so pages that showed 30 bars now show up to 90). Each monitor's uptime next to its bars covers the same days.
@@ -17,6 +19,12 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 - **The status page matches Uptimy's hosted status pages.** Each section is one frame of compact rows: a monitor shows its status, uptime and daily bars in one row (fewer on narrow screens), and only monitors that are down or in maintenance get a colored edge. Incidents and maintenance are rows too, with their timeline oldest first and a final **Resolved** step. Day tooltips are restyled, and a loading placeholder keeps the page's shape.
 - The banner follows hosted pages' order: an open high incident is now an outage (before, only critical), and maintenance in progress now shows over a lower-severity incident.
 - **Cron heartbeats keep their schedule in Uptimy Cloud.** Cloud shows the cron expression and time zone instead of an interval guessed from the next two runs, which was wrong for schedules like weekdays only.
+
+### Upgrading from 0.2.x
+- Back up `/data` first: rolling back to 0.2.x after upgrading isn't possible, because the database schema is newer.
+- The first start rolls up every day still in the database, in the background; until it's done, those days are read as before.
+- Status pages show up to 90 days of bars instead of 30, and each monitor's uptime covers those 90 days. Days before the agent had data are grey; set **Days of history** to 30 to keep the old look.
+- `HISTORY_DAYS` must be at least 90 if you set it. `RETENTION_DAYS` keeps its meaning for every check and run; nothing is pruned that isn't rolled up.
 
 ## [0.2.0] - 2026-10-16
 
