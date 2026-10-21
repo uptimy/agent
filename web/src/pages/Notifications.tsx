@@ -186,7 +186,7 @@ function NotifierForm({ initial, onDone }: { initial: Notifier | null; onDone: (
   const channel = channels.data?.find((c) => c.type === form.type);
 
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>{initial ? "Edit channel" : "New channel"}</CardTitle>
         <CardDescription>{channel?.help}</CardDescription>

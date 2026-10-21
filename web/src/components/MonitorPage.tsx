@@ -115,18 +115,29 @@ export function MonitorActions({
   );
 }
 
-/** One figure in the row of stats at the top of a monitor's page. */
+/**
+ * The row of figures at the top of a monitor's page, the Uptimy app's
+ * StatStrip: one frame, hairlines between the figures (a 1px gap over the
+ * border colour, so wrapped rows don't double a line).
+ */
+export function StatStrip({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border lg:grid-cols-4">{children}</div>
+  );
+}
+
+/** One figure in a StatStrip. */
 export function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
-    <Card className="p-5">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="mt-2 text-xl font-semibold tabular-nums">{value}</div>
+    <div className="min-w-0 bg-card px-4 py-3">
+      <div className="truncate text-xs font-semibold tracking-wide text-muted-foreground uppercase">{label}</div>
+      <div className="mt-1 text-lg font-semibold tabular-nums">{value}</div>
       {sub && (
-        <div className="mt-1 truncate text-xs text-muted-foreground" title={sub}>
+        <div className="mt-0.5 truncate text-xs text-muted-foreground" title={sub}>
           {sub}
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -134,7 +145,7 @@ export function Stat({ label, value, sub }: { label: string; value: React.ReactN
 export function EventsCard({ id, describe }: { id: number; describe: (e: MonitorEvent) => string }) {
   const events = useQuery({ queryKey: ["events", id], queryFn: () => api.events(id) });
   return (
-    <Card className="mt-6">
+    <Card section className="mt-6">
       <CardHeader>
         <CardTitle>Events</CardTitle>
       </CardHeader>

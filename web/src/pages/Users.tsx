@@ -93,7 +93,7 @@ function AddUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreated:
   });
 
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>Add user</CardTitle>
         <CardDescription>They'll sign in with a temporary password and choose their own.</CardDescription>
@@ -169,7 +169,7 @@ function ShareCredentials({ creds, onDone }: { creds: Credentials; onDone: () =>
   const [copied, setCopied] = useState(false);
   const text = `Sign in to Uptimy Agent\n${window.location.origin}\nUsername: ${creds.username}\nTemporary password: ${creds.password}\nYou'll be asked to choose your own password.`;
   return (
-    <Card className="border-up/40 bg-up/5">
+    <Card section className="border-up/40 bg-up/5">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Check className="size-4 text-up" />

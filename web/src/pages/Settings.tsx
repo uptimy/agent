@@ -29,7 +29,7 @@ export function Settings() {
           {canEdit && <KumaImportCard />}
           {canEdit && <RailwayImportCard />}
 
-          <Card>
+          <Card section>
             <CardHeader>
               <CardTitle>Agent</CardTitle>
             </CardHeader>
@@ -83,7 +83,7 @@ function DiscoveryCard() {
   const s = status.data;
   const problems = s ? s.warnings.length + (s.error ? 1 : 0) : 0;
   return (
-    <Card>
+    <Card section>
       <CardHeader className="flex-row flex-wrap items-start justify-between gap-4">
         <div>
           <CardTitle className="flex items-center gap-2">

@@ -205,7 +205,7 @@ function MaintenanceForm({ initial, onDone }: { initial: MaintenanceWindow | nul
   const started = initial?.state === "active";
 
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>{initial ? "Edit maintenance" : "Schedule maintenance"}</CardTitle>
         <CardDescription>

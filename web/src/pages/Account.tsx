@@ -77,7 +77,7 @@ function PasswordCard() {
 
   if (me.password_managed_by_env) {
     return (
-      <Card>
+      <Card section>
         <CardHeader>
           <CardTitle>Password</CardTitle>
           <CardDescription>
@@ -90,7 +90,7 @@ function PasswordCard() {
   }
 
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>Password</CardTitle>
         <CardDescription>Changing it signs you out on your other devices.</CardDescription>
@@ -156,7 +156,7 @@ function DevicesCard() {
   const others = Math.max(0, (sessions.data?.count ?? 1) - 1);
 
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>Devices</CardTitle>
         <CardDescription>

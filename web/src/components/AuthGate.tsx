@@ -102,7 +102,7 @@ function LoginForm() {
 
   return (
     <Centered>
-      <Card>
+      <Card section>
         <CardHeader>
           <CardTitle>{needsCode ? "Two-factor sign-in" : "Sign in"}</CardTitle>
           <CardDescription>
@@ -204,7 +204,7 @@ function ChangePasswordForm({ user }: { user: User }) {
 
   return (
     <Centered>
-      <Card>
+      <Card section>
         <CardHeader>
           <CardTitle>Choose your password</CardTitle>
           <CardDescription>

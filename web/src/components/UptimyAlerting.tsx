@@ -78,7 +78,7 @@ export function UptimyAlertingSettings({ canEdit }: { canEdit: boolean }) {
   const inWindow = !!s.maintenance_until;
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border p-4">
+    <div className="flex flex-col gap-4 border-t pt-4">
       {/* When Uptimy alerts */}
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">

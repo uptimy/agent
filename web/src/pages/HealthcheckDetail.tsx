@@ -22,7 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ErrorNote, PageHeader } from "@/components/Layout";
 import { ResultBars, StatusDot, StatusLabel } from "@/components/status";
-import { BackLink, EventsCard, MonitorActions, Stat } from "@/components/MonitorPage";
+import { BackLink, EventsCard, MonitorActions, Stat, StatStrip } from "@/components/MonitorPage";
 import { AcknowledgedBadge, managedBadge } from "@/components/MonitorEmpty";
 
 // Up to 7 days every check is shown; longer ranges are one point a day, from
@@ -100,7 +100,7 @@ export function HealthcheckDetail() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <StatStrip>
         <Stat
           label="Status"
           value={<StatusLabel status={h.status} />}
@@ -117,9 +117,9 @@ export function HealthcheckDetail() {
           value={formatLatency(uptime["24h"].avg_latency_ms)}
           sub={h.last_result?.ok === false ? h.last_result.message : undefined}
         />
-      </div>
+      </StatStrip>
 
-      <Card className="mt-6">
+      <Card section className="mt-6">
         <CardHeader className="flex-row items-center justify-between">
           <CardTitle>Response time</CardTitle>
           <div className="flex gap-1 rounded-md bg-muted p-0.5">

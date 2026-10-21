@@ -28,7 +28,7 @@ export function TwoFactorCard() {
   const left = status.data?.recovery_codes_left ?? 0;
 
   return (
-    <Card>
+    <Card section>
       <CardHeader className="flex-row flex-wrap items-start justify-between gap-4">
         <div>
           <CardTitle className="flex items-center gap-2">
