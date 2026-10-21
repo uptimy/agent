@@ -105,7 +105,7 @@ function ListPage<T extends { name: string; status: Status }>({
               </div>
             )}
             {shown.length ? (
-              <div className="rounded-xl border bg-card p-2 shadow-xs">{render(shown)}</div>
+              <div>{render(shown)}</div>
             ) : (
               <p className="py-8 text-center text-sm text-muted-foreground">Nothing matches “{search}”.</p>
             )}

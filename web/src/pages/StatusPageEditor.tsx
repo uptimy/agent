@@ -101,10 +101,7 @@ export function StatusPageEditor() {
       <ErrorNote error={config.error} />
       {draft && (
         <div className="flex flex-col gap-6">
-          <nav
-            aria-label="Status page settings"
-            className="flex gap-1 overflow-x-auto rounded-xl border bg-card p-1.5 shadow-xs sm:gap-2"
-          >
+          <nav aria-label="Status page settings" className="flex gap-6 overflow-x-auto border-b">
             {TABS.map((t) => (
               <button
                 key={t.id}
@@ -112,14 +109,14 @@ export function StatusPageEditor() {
                 aria-current={tab === t.id ? "page" : undefined}
                 onClick={() => setTab(t.id)}
                 className={cn(
-                  "flex shrink-0 items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors sm:px-4",
+                  "-mb-px flex shrink-0 items-center gap-2 border-b-2 py-2.5 text-sm font-medium whitespace-nowrap transition-colors",
                   tab === t.id
-                    ? "border-primary/40 bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
                 )}
               >
                 <t.icon className="size-4" />
-                <span className={cn(tab !== t.id && "hidden sm:inline")}>{t.label}</span>
+                <span>{t.label}</span>
               </button>
             ))}
           </nav>
@@ -140,7 +137,7 @@ export function StatusPageEditor() {
               <fieldset disabled={!canEdit} className="flex flex-col gap-6">
                 {tab === "editor" ? (
                   <>
-                    <Card>
+                    <Card section>
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                           <Settings2 className="size-4" /> Page settings
@@ -222,7 +219,7 @@ export function StatusPageEditor() {
                       </CardContent>
                     </Card>
 
-                    <Card>
+                    <Card section>
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                           <Palette className="size-4" /> Branding
@@ -414,7 +411,8 @@ function SettingRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg bg-muted/40 px-4 py-3">
+    // Rows share the section's frame, separated by hairlines, not a box each.
+    <div className="flex items-center justify-between gap-4 border-t pt-4">
       <div className="min-w-0">
         <div className="text-sm font-medium">{title}</div>
         <div className="text-xs text-muted-foreground">{description}</div>
@@ -445,7 +443,7 @@ function isDashboardHost(domain: string) {
 function DomainCard({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const isDashboard = isDashboardHost(value);
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>Custom domain</CardTitle>
         <CardDescription>
@@ -500,7 +498,7 @@ function BadgesCard({ config, base }: { config: StatusPageConfig; base: string }
     ...monitors.map((m) => ({ key: String(m.id), name: m.label || m.name, src: url(m.id) })),
   ];
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>Badges</CardTitle>
         <CardDescription>

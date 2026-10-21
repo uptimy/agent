@@ -69,7 +69,7 @@ export function SectionsEditor({ draft, onChange: edit }: { draft: StatusPageCon
   };
 
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <LayoutList className="size-4" /> Sections
@@ -79,7 +79,8 @@ export function SectionsEditor({ draft, onChange: edit }: { draft: StatusPageCon
           Empty sections are hidden.
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+      {/* The groups are the content: each is a heading line and one framed list. */}
+      <CardContent className="flex flex-col gap-8 border-0 bg-transparent p-0">
         {draft.sections.length === 0 ? (
           <div className="flex flex-col items-center gap-4 rounded-xl border-2 border-dashed bg-primary/[0.03] px-6 py-12 text-center">
             <span className="grid size-14 place-items-center rounded-full bg-primary/10 text-primary">
@@ -245,10 +246,7 @@ function SectionCard({
       id={section.id}
       label={`Drag to reorder section ${name}`}
       className={(dragging) =>
-        cn(
-          "rounded-xl border bg-card p-3 transition-shadow sm:p-4",
-          dragging ? "border-primary shadow-lg" : "hover:border-primary/50",
-        )
+        cn("rounded-xl transition-shadow", dragging && "bg-background shadow-lg ring-1 ring-primary")
       }
     >
       {(handle) => (
@@ -284,7 +282,7 @@ function SectionCard({
             </button>
           </div>
 
-          <div className="mt-3 flex flex-col gap-2">
+          <div className="mt-3 flex flex-col divide-y overflow-hidden rounded-xl border bg-card">
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
@@ -305,7 +303,7 @@ function SectionCard({
             <button
               type="button"
               onClick={onAdd}
-              className="flex items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:border-solid hover:border-primary hover:bg-primary/5 hover:text-primary"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-nav-hover hover:text-primary"
             >
               <Plus className="size-4" /> Add monitors
             </button>
@@ -323,8 +321,8 @@ function MonitorCard({ m, edit }: { m: StatusPageMonitor; edit: Edit }) {
       label={`Drag to reorder ${m.label || m.name}`}
       className={(dragging) =>
         cn(
-          "flex items-center gap-2 rounded-lg border bg-muted/30 py-2 pr-2 pl-1 transition-colors",
-          dragging ? "border-primary bg-card shadow-md" : "hover:border-primary/50 hover:bg-nav-hover",
+          "flex items-center gap-2 bg-card py-2 pr-2 pl-1 transition-colors",
+          dragging ? "rounded-lg shadow-md ring-1 ring-primary" : "hover:bg-nav-hover",
         )
       }
     >

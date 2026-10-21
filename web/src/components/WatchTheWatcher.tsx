@@ -25,7 +25,7 @@ export function WatchTheWatcherCard() {
   // because the connected view it comes from is gone by then.
   const [warning, setWarning] = useState<string>();
   return (
-    <Card id="watch-the-watcher">
+    <Card section id="watch-the-watcher">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <UptimyMark className="h-3" /> Uptimy Cloud
@@ -64,7 +64,7 @@ function ConnectButton() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="min-w-0 flex-1 text-sm font-medium">Connect with your Uptimy account</div>
         <Button onClick={() => start.mutate()} disabled={start.isPending} className="shrink-0">
           <UptimyMark className="h-3 brightness-0 invert dark:brightness-100 dark:invert-0" />
@@ -114,7 +114,7 @@ function Connected({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-start gap-3 rounded-lg border p-4">
+      <div className="flex items-start gap-3">
         <span
           className={cn(
             "mt-1.5 size-2.5 shrink-0 rounded-full",

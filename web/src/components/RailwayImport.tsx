@@ -23,7 +23,7 @@ export function RailwayImportCard() {
   };
 
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <TrainFront className="size-4" /> Import from Railway

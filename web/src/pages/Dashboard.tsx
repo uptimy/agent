@@ -38,12 +38,12 @@ export function Dashboard() {
       <MonitorsFileNotice />
 
       {healthcheckList.isSuccess && heartbeatList.isSuccess && (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-10">
           <Summary healthchecks={healthchecks} heartbeats={heartbeats} />
 
           {/* The summary's four columns and gap: the lists take three, activity one. */}
           <div className="grid gap-4 xl:grid-cols-4">
-            <div className="flex min-w-0 flex-col gap-6 xl:col-span-3">
+            <div className="flex min-w-0 flex-col gap-10 xl:col-span-3">
               <KindSection kind="healthcheck" icon={HeartPulse} count={healthchecks.length} canEdit={canEdit}>
                 <HealthcheckList healthchecks={healthchecks.slice(0, PREVIEW)} />
               </KindSection>
@@ -52,11 +52,11 @@ export function Dashboard() {
               </KindSection>
             </div>
 
-            <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-10">
               {canEdit && <WatchTheWatcherNudge />}
               <Section title="Recent activity" icon={History}>
                 {activity.data?.length ? (
-                  <ol className="flex flex-col gap-3">
+                  <ol className="flex flex-col gap-3 rounded-xl border bg-card p-4">
                     {activity.data.slice(0, 12).map((e) => (
                       <ActivityRow key={e.id} e={e} />
                     ))}
@@ -220,45 +220,25 @@ function Summary({ healthchecks, heartbeats }: { healthchecks: HealthcheckSummar
   ];
 
   return (
-    // On the page's four-column grid, not inside a card, so the cards line up
-    // with the sections below them.
+    // The app's StatStrip: four figures in one frame, hairlines between them.
+    // Each links to where it's counted; colour only where it needs attention.
     <section>
-      <h2 className="flex items-center gap-2 text-base font-bold md:text-lg">
-        <LayoutDashboard className="size-4 shrink-0" />
-        Monitoring summary
-      </h2>
-      <p className="mt-1 mb-4 text-sm text-muted-foreground">
-        High-signal counts for your healthchecks, heartbeats and alerting.
-      </p>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border xl:grid-cols-4">
         {cards.map((c) => {
-          const tone = tones[c.tone];
+          const attention = c.tone === "down" || c.tone === "paused";
           return (
-            <Link
-              key={c.to}
-              to={c.to}
-              className={cn(
-                "flex h-full flex-col gap-4 rounded-xl border-[1.5px] bg-card p-4 shadow-xs transition-all hover:bg-nav-hover hover:shadow-md",
-                tone.hover,
-              )}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <span className={cn("grid size-10 shrink-0 place-items-center rounded-lg bg-nav-hover", tone.icon)}>
-                  <c.icon className="size-5" />
-                </span>
-                <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", tone.badge)}>{c.badge}</span>
-              </div>
-              <div>
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="text-2xl leading-none font-bold tabular-nums">{c.value}</span>
-                  <span className="text-sm font-semibold">{c.title}</span>
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">{c.detail}</p>
-              </div>
+            <Link key={c.to} to={c.to} className="min-w-0 bg-card px-4 py-3 transition-colors hover:bg-nav-hover">
+              <dt className="truncate text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                {c.title}
+              </dt>
+              <dd className="mt-1 text-lg leading-tight font-semibold tabular-nums">{c.value}</dd>
+              <dd className={cn("mt-0.5 truncate text-xs", attention ? tones[c.tone].icon : "text-muted-foreground")}>
+                {c.detail}
+              </dd>
             </Link>
           );
         })}
-      </div>
+      </dl>
     </section>
   );
 }

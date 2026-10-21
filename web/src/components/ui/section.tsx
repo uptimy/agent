@@ -2,7 +2,11 @@ import type * as React from "react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** A titled card, like SectionCard in the Uptimy app. */
+/**
+ * A titled section: a heading on the page with an optional line and action,
+ * like PageSection in the Uptimy app. Only its content is framed (a list, a
+ * chart), never the section itself.
+ */
 export function Section({
   title,
   icon: Icon,
@@ -21,8 +25,8 @@ export function Section({
   contentClassName?: string;
 }) {
   return (
-    <section className={cn("rounded-xl border bg-card shadow-xs", className)}>
-      <div className="flex flex-col gap-3 px-4 pt-4 sm:flex-row sm:items-center sm:justify-between md:px-5 md:pt-5">
+    <section className={className}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-base font-bold md:text-lg">
             {Icon && <Icon className="size-4 shrink-0" />}
@@ -32,7 +36,7 @@ export function Section({
         </div>
         {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
       </div>
-      <div className={cn("p-4 md:p-5", contentClassName)}>{children}</div>
+      <div className={cn("mt-4", contentClassName)}>{children}</div>
     </section>
   );
 }

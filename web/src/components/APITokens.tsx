@@ -42,7 +42,7 @@ export function APITokensCard() {
   const origin = window.location.origin;
 
   return (
-    <Card>
+    <Card section>
       <CardHeader className="flex-row items-start justify-between gap-4">
         <div>
           <CardTitle>API tokens</CardTitle>
@@ -74,7 +74,7 @@ export function APITokensCard() {
 
         {creating && (
           <form
-            className="flex flex-col gap-3 rounded-lg border p-4"
+            className="flex flex-col gap-3 border-t pt-4"
             onSubmit={(e) => {
               e.preventDefault();
               create.mutate();

@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { CopyField } from "@/components/ui/copy-button";
 import { ErrorNote, PageHeader } from "@/components/Layout";
 import { DailyBars, HeartbeatDot, HeartbeatStateLabel, RunBars, runOutcome, runTime } from "@/components/status";
-import { BackLink, EventsCard, MonitorActions, Stat } from "@/components/MonitorPage";
+import { BackLink, EventsCard, MonitorActions, Stat, StatStrip } from "@/components/MonitorPage";
 import { AcknowledgedBadge, managedBadge } from "@/components/MonitorEmpty";
 import { useCanEdit } from "@/components/AuthGate";
 
@@ -46,7 +46,7 @@ export function HeartbeatDetail() {
         actions={<MonitorActions m={h} />}
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <StatStrip>
         <Stat label="State" value={<HeartbeatStateLabel state={h.tracking.state} />} sub={lastRunText(h.last_run)} />
         <NextRunStat h={h} />
         <Stat label="On time 30d" value={formatUptime(stats["30d"].ratio)} sub={runCounts(stats["30d"])} />
@@ -61,7 +61,7 @@ export function HeartbeatDetail() {
                 : undefined
           }
         />
-      </div>
+      </StatStrip>
 
       {/* The same four columns and gap as the stats above, so the cards line up. */}
       <div className="mt-6 grid gap-4 lg:grid-cols-4">
@@ -71,7 +71,7 @@ export function HeartbeatDetail() {
         <ScheduleCard h={h} upcoming={upcoming} />
       </div>
 
-      <Card className="mt-6">
+      <Card section className="mt-6">
         <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
           <CardTitle>On-time runs</CardTitle>
           <span className="text-xs text-muted-foreground tabular-nums">
@@ -183,7 +183,7 @@ function PingCard({ h }: { h: HeartbeatSummary }) {
   const ex = examples[example];
 
   return (
-    <Card>
+    <Card section>
       <CardHeader className="flex-row items-start justify-between gap-4">
         <div>
           <CardTitle>Ping URL</CardTitle>
@@ -261,7 +261,7 @@ function CronJobRunsCard({ h }: { h: HeartbeatSummary }) {
     ["CronJob suspended", "The heartbeat is paused until the CronJob is resumed."],
   ];
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>Runs from Kubernetes</CardTitle>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -290,7 +290,7 @@ function CronJobRunsCard({ h }: { h: HeartbeatSummary }) {
 
 function ViewerPingNote() {
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>Ping URL</CardTitle>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -304,7 +304,7 @@ function ViewerPingNote() {
 function ScheduleCard({ h, upcoming }: { h: HeartbeatSummary; upcoming: string[] }) {
   const s = h.heartbeat;
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>Schedule</CardTitle>
       </CardHeader>
@@ -351,7 +351,7 @@ function RunsCard({ id }: { id: number }) {
   // The API returns them oldest first, for the bars; the table leads with the newest.
   const newest = [...(runs.data ?? [])].reverse();
   return (
-    <Card className="mt-6">
+    <Card section className="mt-6">
       <CardHeader>
         <CardTitle>Runs</CardTitle>
       </CardHeader>

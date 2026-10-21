@@ -173,7 +173,7 @@ function NewIncidentForm({ onDone }: { onDone: () => void }) {
   });
 
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>Report an incident</CardTitle>
         <CardDescription>

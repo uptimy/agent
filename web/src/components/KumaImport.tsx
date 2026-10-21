@@ -21,7 +21,7 @@ export function KumaImportCard() {
   };
 
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <ArrowRightLeft className="size-4" /> Import from Uptime Kuma

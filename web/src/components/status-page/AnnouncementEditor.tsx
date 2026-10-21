@@ -62,7 +62,7 @@ function AnnouncementForm({
   });
 
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Megaphone className="size-4 text-primary" /> Announcement

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { CopyButton, CopyField } from "@/components/ui/copy-button";
 import { Input, Select, Switch } from "@/components/ui/input";
 import { ErrorNote, PageHeader } from "@/components/Layout";
-import { Stat } from "@/components/MonitorPage";
+import { Stat, StatStrip } from "@/components/MonitorPage";
 
 /**
  * Kubernetes discovery: how its scans are going, and every resource it
@@ -43,7 +43,7 @@ export function KubernetesPage() {
       <ErrorNote error={status.error} />
       {s && (
         <div className="flex flex-col gap-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatStrip>
             <Stat label="Last scan" value={s.last_scan ? timeAgo(s.last_scan) : "Not yet"} sub="every 30 seconds" />
             <Stat
               label="Scope"
@@ -56,10 +56,10 @@ export function KubernetesPage() {
               value={String(s.warnings.length + (s.error ? 1 : 0))}
               sub={s.warnings.length || s.error ? "see below" : "none"}
             />
-          </div>
+          </StatStrip>
 
           {(s.error || s.warnings.length > 0) && (
-            <Card>
+            <Card section>
               <CardHeader>
                 <CardTitle>Problems</CardTitle>
                 <p className="mt-1 text-sm text-muted-foreground">
@@ -95,7 +95,7 @@ export function KubernetesPage() {
 
 function GettingStarted() {
   return (
-    <Card>
+    <Card section>
       <CardHeader>
         <CardTitle>Label what you want monitored</CardTitle>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -155,7 +155,7 @@ function ResourcesCard() {
   const unmonitored = shown.filter((r) => r.monitors.length === 0 && r.label_state !== "out");
 
   return (
-    <Card>
+    <Card section>
       <CardHeader className="flex-row flex-wrap items-start justify-between gap-4">
         <div>
           <CardTitle>Resources</CardTitle>
