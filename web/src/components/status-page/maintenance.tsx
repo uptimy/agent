@@ -116,14 +116,14 @@ export function MaintenanceCard({ m }: { m: PublicMaintenance }) {
           </span>
           <span
             className={cn(
-              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
               t.chip,
             )}
           >
             <Icon className="size-3" />
             {t.label}
           </span>
-          <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+          <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
             <Clock className="size-3" />
             {length(m)}
           </span>
@@ -139,7 +139,7 @@ export function MaintenanceCard({ m }: { m: PublicMaintenance }) {
         </div>
 
         <div className="border-t border-border/70 pt-4">
-          <h4 className="mb-2.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+          <h4 className="mb-2.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
             Affected services
           </h4>
           <div className="flex flex-wrap gap-2">
@@ -162,7 +162,7 @@ export function MaintenanceCard({ m }: { m: PublicMaintenance }) {
 
         {active && (
           <div>
-            <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium">
+            <div className="mb-1.5 flex items-center justify-between text-xs font-medium">
               <span className="text-muted-foreground">Maintenance in progress</span>
               <span className="text-orange-600 tabular-nums dark:text-orange-400">{pct}%</span>
             </div>
@@ -178,7 +178,7 @@ export function MaintenanceCard({ m }: { m: PublicMaintenance }) {
         <div className="border-t border-border/70 pt-4">
           <div className="mb-4 flex items-center gap-2">
             <Clock className="size-3.5 text-muted-foreground" />
-            <h4 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Timeline</h4>
+            <h4 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Timeline</h4>
           </div>
           <div className="relative pl-8">
             <div className="absolute top-3 bottom-3 left-[11px] w-px bg-border" />
@@ -215,7 +215,7 @@ function When({ icon: Icon, label, at }: { icon: typeof Calendar; label: string;
     <div className="flex items-center gap-2.5">
       <Icon className="size-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0">
-        <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{label}</dt>
+        <dt className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{label}</dt>
         <dd className="text-[13px] font-medium text-foreground tabular-nums">{formatWhen(at)}</dd>
       </div>
     </div>

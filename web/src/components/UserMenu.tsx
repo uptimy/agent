@@ -164,7 +164,7 @@ function ThemeSwitch() {
             type="button"
             role="radio"
             aria-checked={preference === value}
-            title={label}
+            data-tip={label}
             onClick={(e) => {
               e.stopPropagation(); // keep the menu open to see the change
               setTheme(value);

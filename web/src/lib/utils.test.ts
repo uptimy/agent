@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSpan, nearestStep } from "./utils";
+import { formatDuration, formatLatency, formatSpan, formatUptime, nearestStep, timeAgo } from "./utils";
 
 describe("formatSpan", () => {
   it("names the largest whole unit", () => {
@@ -20,5 +20,31 @@ describe("nearestStep", () => {
     expect(nearestStep(4000, steps)).toBe(2);
     expect(nearestStep(1, steps)).toBe(0);
     expect(nearestStep(10 ** 9, steps)).toBe(3);
+  });
+});
+
+describe("style guide formats", () => {
+  it("shows uptime with two decimals, 100% included", () => {
+    expect(formatUptime(1)).toBe("100.00%");
+    expect(formatUptime(0.99981)).toBe("99.98%");
+    expect(formatUptime(null)).toBe("—");
+  });
+
+  it("shows ms below a second and one decimal above", () => {
+    expect(formatLatency(278)).toBe("278 ms");
+    expect(formatLatency(1840)).toBe("1.8 s");
+    expect(formatDuration(450)).toBe("450 ms");
+    expect(formatDuration(5200)).toBe("5.2 s");
+    expect(formatDuration(125_000)).toBe("2m 5s");
+  });
+
+  it("keeps relative times compact", () => {
+    const ago = (s: number) => new Date(Date.now() - s * 1000).toISOString();
+    expect(timeAgo(ago(2))).toBe("just now");
+    expect(timeAgo(ago(42))).toBe("42s ago");
+    expect(timeAgo(ago(5 * 60))).toBe("5m ago");
+    expect(timeAgo(ago(3 * 3600 + 59))).toBe("3h ago");
+    expect(timeAgo(ago(2 * 86400))).toBe("2d ago");
+    expect(timeAgo(ago(-4 * 60))).toBe("in 4m");
   });
 });

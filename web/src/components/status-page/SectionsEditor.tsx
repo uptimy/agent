@@ -274,7 +274,7 @@ function SectionCard({
             <button
               type="button"
               aria-label={`Delete section ${name}`}
-              title="Delete section"
+              data-tip="Delete section"
               onClick={remove}
               className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-down/10 hover:text-down"
             >
@@ -347,7 +347,7 @@ function MonitorCard({ m, edit }: { m: StatusPageMonitor; edit: Edit }) {
           <button
             type="button"
             aria-label={`Remove ${m.label || m.name} from the page`}
-            title="Remove from the page"
+            data-tip="Remove from the page"
             onClick={() => edit((d) => removeMonitor(d, m.id))}
             className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-down/10 hover:text-down"
           >

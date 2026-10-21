@@ -133,7 +133,7 @@ export function Stat({ label, value, sub }: { label: string; value: React.ReactN
       <div className="truncate text-xs font-semibold tracking-wide text-muted-foreground uppercase">{label}</div>
       <div className="mt-1 text-lg font-semibold tabular-nums">{value}</div>
       {sub && (
-        <div className="mt-0.5 truncate text-xs text-muted-foreground" title={sub}>
+        <div className="mt-0.5 truncate text-xs text-muted-foreground" data-tip={sub}>
           {sub}
         </div>
       )}

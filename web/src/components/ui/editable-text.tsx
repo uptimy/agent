@@ -80,7 +80,7 @@ export function EditableText({
       <button
         type="button"
         onClick={begin}
-        title="Click to rename"
+        data-tip="Click to rename"
         className="min-w-0 truncate rounded px-1 py-0.5 text-left hover:bg-nav-hover"
       >
         {value || fallback || <span className="font-normal text-muted-foreground italic">{placeholder}</span>}

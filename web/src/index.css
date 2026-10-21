@@ -22,7 +22,6 @@
   --paused: #f59e0b;
   /* Status page palette, shared with upti.my-status */
   --degraded: #f97316;
-  --up-soft: #65bd91;
   --no-data: #d4d4d4;
   /* Navigation, as in the app's sidebar (Sidebar.tsx NavItem): the active
      item is a solid brand.500 pill; hover tints brand.50 / gray.900. */
@@ -45,7 +44,6 @@
   --primary: #33a36b;
   --primary-foreground: #ffffff;
   --pending: #52525b;
-  --up-soft: rgb(51 163 107 / 0.8);
   --no-data: #404040;
   --nav-hover: #18181b;
   --sunken: #18181b;
@@ -76,7 +74,6 @@
   --color-pending: var(--pending);
   --color-paused: var(--paused);
   --color-degraded: var(--degraded);
-  --color-up-soft: var(--up-soft);
   --color-no-data: var(--no-data);
   --color-brand: var(--brand);
   --color-nav-hover: var(--nav-hover);

@@ -70,7 +70,7 @@ export function StatusChip({ status }: { status: IncidentStatus }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
         t.chip,
       )}
     >
@@ -83,7 +83,7 @@ export function StatusChip({ status }: { status: IncidentStatus }) {
 export function SeverityChip({ severity }: { severity: IncidentSeverity }) {
   const t = severityTheme[severity];
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
       <span className={cn("size-1.5 rounded-full", t.dot)} />
       {t.label}
     </span>
@@ -169,7 +169,7 @@ export function IncidentCard({ incident }: { incident: PublicIncident }) {
           </div>
           <h3 className="mt-2.5 text-sm leading-snug font-semibold text-foreground sm:text-[15px]">{incident.title}</h3>
           {/* Phones: duration and date here; wider screens have the right rail. */}
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground sm:hidden">
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground sm:hidden">
             <span className="font-semibold text-foreground tabular-nums">{duration}</span>
             <span>·</span>
             <span className="tabular-nums">{when}</span>
@@ -197,7 +197,7 @@ export function IncidentCard({ incident }: { incident: PublicIncident }) {
         <div className="hidden shrink-0 items-start gap-2.5 sm:flex sm:gap-3">
           <div className="text-right">
             <div className="text-sm font-semibold text-foreground tabular-nums sm:text-base">{duration}</div>
-            <div className="text-[11px] text-muted-foreground">{when}</div>
+            <div className="text-xs text-muted-foreground">{when}</div>
           </div>
           <ChevronDown
             className={cn(

@@ -28,10 +28,12 @@ export function countByStatus(list: { status: Status }[]) {
 
 /** How a heartbeat's state reads, and its color. */
 export const heartbeatStates: Record<HeartbeatState, { label: string; tone: "up" | "down" | "late" | "muted" }> = {
-  waiting: { label: "Waiting for the first run", tone: "muted" },
-  on_time: { label: "On schedule", tone: "up" },
-  late: { label: "Late", tone: "late" },
-  missed: { label: "Missed a run", tone: "down" },
-  failed: { label: "Failed", tone: "down" },
+  // The style guide's status words for heartbeats; what exactly happened (a
+  // missed or failed run) is in the line under the status.
+  waiting: { label: "Waiting", tone: "muted" },
+  on_time: { label: "Healthy", tone: "up" },
+  late: { label: "At risk", tone: "late" },
+  missed: { label: "Down", tone: "down" },
+  failed: { label: "Down", tone: "down" },
   paused: { label: "Paused", tone: "muted" },
 };

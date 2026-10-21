@@ -5,15 +5,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** Uptime with two decimals, as everywhere in Uptimy: 99.98%, 100.00%. */
 export function formatUptime(ratio: number | null | undefined) {
   if (ratio == null) return "—";
-  const pct = ratio * 100;
-  return `${pct >= 99.995 ? "100" : pct.toFixed(2)}%`;
+  return `${(ratio * 100).toFixed(2)}%`;
 }
 
+/** Response time: ms below a second, seconds with one decimal above (1.8 s). */
 export function formatLatency(ms: number | null | undefined) {
   if (ms == null) return "—";
-  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
 }
 
 export function formatInterval(seconds: number) {
@@ -60,16 +61,27 @@ export function formatClock(iso: string) {
     : `${d.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
 }
 
-const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-
-/** Relative to now, past or future: "5 minutes ago", "in 3 hours". */
+/**
+ * Relative to now, compact like the Uptimy app: "just now", "5m ago", "3h ago",
+ * "2d ago", "in 4m". Older than a week falls back to weeks, months and years.
+ */
 export function timeAgo(iso: string) {
-  const diff = (new Date(iso).getTime() - Date.now()) / 1000;
+  const diff = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  const future = diff < 0;
   const abs = Math.abs(diff);
-  if (abs < 60) return rtf.format(Math.round(diff), "second");
-  if (abs < 3600) return rtf.format(Math.round(diff / 60), "minute");
-  if (abs < 86400) return rtf.format(Math.round(diff / 3600), "hour");
-  return rtf.format(Math.round(diff / 86400), "day");
+  if (abs < 5) return "just now";
+  const units: [number, string][] = [
+    [31_536_000, "y"],
+    [2_592_000, "mo"],
+    [604_800, "w"],
+    [86_400, "d"],
+    [3_600, "h"],
+    [60, "m"],
+    [1, "s"],
+  ];
+  const [size, unit] = units.find(([size]) => abs >= size)!;
+  const n = `${Math.floor(abs / size)}${unit}`;
+  return future ? `in ${n}` : `${n} ago`;
 }
 
 /** timeAgo within the last week; older ones have their date beside them already. */
@@ -94,8 +106,8 @@ export function pingURL(token: string) {
 /** 850 → "850 ms", 75_000 → "1m 15s", 5_400_000 → "1h 30m". */
 export function formatDuration(ms: number) {
   if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
   const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   if (m < 60) return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
   const h = Math.floor(m / 60);

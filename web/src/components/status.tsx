@@ -1,7 +1,7 @@
 import type { Daily, HeartbeatState, Result, Run, Status } from "@/lib/api";
 import { cn, formatDateTime, formatDuration, formatLatency, formatUptime } from "@/lib/utils";
 import { heartbeatStates } from "@/lib/monitors";
-import { useTooltip } from "@/components/ui/tooltip";
+import { tip, type TipTone } from "@/components/ui/tip-layer";
 
 const dotColor: Record<Status, string> = {
   up: "bg-up",
@@ -21,7 +21,8 @@ export function StatusDot({ status, className }: { status: Status; className?: s
   );
 }
 
-const labels: Record<Status, string> = { up: "Up", down: "Down", pending: "Pending", paused: "Paused" };
+// The status words of the Uptimy style guide: Healthy, Down, Paused, Waiting.
+const labels: Record<Status, string> = { up: "Healthy", down: "Down", pending: "Waiting", paused: "Paused" };
 
 export function StatusLabel({ status }: { status: Status }) {
   return (
@@ -34,7 +35,6 @@ export function StatusLabel({ status }: { status: Status }) {
 
 /** Recent check results as thin bars, newest on the right. */
 export function ResultBars({ results, slots = 40 }: { results: Result[]; slots?: number }) {
-  const { bind, tip } = useTooltip();
   const padded: (Result | null)[] = [
     ...Array(Math.max(0, slots - results.length)).fill(null),
     ...results.slice(-slots),
@@ -44,38 +44,31 @@ export function ResultBars({ results, slots = 40 }: { results: Result[]; slots?:
       {padded.map((r, i) => (
         <span
           key={i}
-          {...bind(r ? <ResultTip r={r} /> : "No data yet")}
+          {...(r ? resultTip(r) : { "data-tip": "No data yet" })}
           className={cn(
             "w-1.5 min-w-[3px] flex-1 rounded-sm transition hover:brightness-110",
             r == null ? "bg-muted" : r.ok ? "bg-up" : "bg-down",
           )}
         />
       ))}
-      {tip}
     </div>
   );
 }
 
-function ResultTip({ r }: { r: Result }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-neutral-400">{formatDateTime(r.time)}</span>
-      <span className="flex items-center gap-1.5 font-medium">
-        <span className={cn("size-2 rounded-full", r.ok ? "bg-up" : "bg-down")} />
-        {r.ok ? "OK" : "Failed"}
-        {r.latency_ms > 0 && <span className="font-normal text-neutral-400">· {formatLatency(r.latency_ms)}</span>}
-      </span>
-      {r.message && <span className="max-w-64 truncate text-neutral-300">{r.message}</span>}
-    </div>
-  );
-}
+const resultTip = (r: Result) =>
+  tip({
+    title: formatDateTime(r.time),
+    value: r.ok ? "OK" : "Failed",
+    tone: r.ok ? "up" : "down",
+    body: r.message || undefined,
+    meta: r.latency_ms > 0 ? formatLatency(r.latency_ms) : undefined,
+  });
 
-/** Bar colour for a day's uptime, using the hosted status page thresholds. */
+/** Bar colour for a day's uptime: the style guide's health thresholds, 99% and 95%. */
 function dailyColor(ratio: number | null) {
   if (ratio == null) return "bg-no-data";
   const pct = ratio * 100;
-  if (pct >= 99.5) return "bg-up";
-  if (pct >= 99) return "bg-up-soft";
+  if (pct >= 99) return "bg-up";
   if (pct >= 95) return "bg-degraded";
   return "bg-down";
 }
@@ -95,7 +88,6 @@ export function DailyBars({
   /** Bar height; the status page uses shorter bars than the monitor pages. */
   barClassName?: string;
 }) {
-  const { bind, tip } = useTooltip();
   return (
     <div
       className="grid gap-0.5"
@@ -106,7 +98,7 @@ export function DailyBars({
       {days.map((d) => (
         <span
           key={d.date}
-          {...bind(<DayTip d={d} measure={measure} />)}
+          {...dayTip(d, measure)}
           className={cn(
             "rounded-[3px] transition hover:brightness-110",
             barClassName,
@@ -114,43 +106,28 @@ export function DailyBars({
           )}
         />
       ))}
-      {tip}
     </div>
   );
 }
 
-function DayTip({ d, measure }: { d: Daily; measure: "uptime" | "on time" }) {
-  const date = new Date(d.date + "T00:00:00Z").toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
+const dayTip = (d: Daily, measure: "uptime" | "on time") =>
+  tip({
+    title: new Date(d.date + "T00:00:00Z").toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    }),
+    value: d.count ? formatUptime(d.ratio) : undefined,
+    tone: d.count ? healthTone(d.ratio ?? 0) : undefined,
+    meta: d.count
+      ? measure === "on time"
+        ? `On time · ${d.count} run${d.count === 1 ? "" : "s"}`
+        : "Uptime"
+      : "No data yet",
   });
-  // Laid out like the hosted tooltip: the day, the figure in its colour, a footnote.
-  return (
-    <div className="min-w-36">
-      <div className="flex items-baseline justify-between gap-4">
-        <span className="font-semibold">{date}</span>
-        {d.count ? (
-          <span className={cn("flex items-center gap-1.5 text-sm font-semibold tabular-nums", tipTone(d.ratio ?? 0))}>
-            <span className="size-1.5 rounded-full bg-current" />
-            {formatUptime(d.ratio)}
-          </span>
-        ) : null}
-      </div>
-      <div className="mt-1 text-[11px] text-neutral-400">
-        {d.count
-          ? measure === "on time"
-            ? `On time · ${d.count} run${d.count === 1 ? "" : "s"}`
-            : "Uptime"
-          : "No data"}
-      </div>
-    </div>
-  );
-}
 
-const tipTone = (ratio: number) =>
-  ratio >= 0.99 ? "text-emerald-400" : ratio >= 0.95 ? "text-orange-400" : "text-red-400";
+const healthTone = (ratio: number): TipTone => (ratio >= 0.99 ? "up" : ratio >= 0.95 ? "degraded" : "down");
 
 const stateDot = {
   up: "bg-up",
@@ -200,14 +177,13 @@ export const runTime = (r: Run) => r.finished_at ?? r.started_at ?? r.due_at ?? 
 
 /** Recent heartbeat runs as bars, newest on the right. */
 export function RunBars({ runs, slots = 30 }: { runs: Run[]; slots?: number }) {
-  const { bind, tip } = useTooltip();
   const padded: (Run | null)[] = [...Array(Math.max(0, slots - runs.length)).fill(null), ...runs.slice(-slots)];
   return (
     <div className="flex h-7 items-stretch gap-[2px]" role="img" aria-label="Recent runs">
       {padded.map((r, i) => (
         <span
           key={r?.id ?? `empty-${i}`}
-          {...bind(r ? <RunTip r={r} /> : "No run yet")}
+          {...(r ? runTip(r) : { "data-tip": "No run yet" })}
           className={cn(
             "w-1.5 min-w-[3px] flex-1 rounded-sm transition hover:brightness-110",
             r == null ? "bg-muted" : runOutcome(r).color,
@@ -215,24 +191,17 @@ export function RunBars({ runs, slots = 30 }: { runs: Run[]; slots?: number }) {
           )}
         />
       ))}
-      {tip}
     </div>
   );
 }
 
-function RunTip({ r }: { r: Run }) {
-  const { label, color } = runOutcome(r);
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-neutral-400">{formatDateTime(runTime(r))}</span>
-      <span className="flex items-center gap-1.5 font-medium">
-        <span className={cn("size-2 rounded-full", color)} />
-        {label}
-        {r.duration_ms != null && (
-          <span className="font-normal text-neutral-400">· took {formatDuration(r.duration_ms)}</span>
-        )}
-      </span>
-      {r.message && <span className="max-w-64 truncate text-neutral-300">{r.message}</span>}
-    </div>
-  );
-}
+const runTone: Record<Run["outcome"], TipTone> = { success: "up", running: "info", missed: "down", failure: "down" };
+
+const runTip = (r: Run) =>
+  tip({
+    title: formatDateTime(runTime(r)),
+    value: runOutcome(r).label,
+    tone: r.outcome === "success" && !r.on_time ? "degraded" : runTone[r.outcome],
+    body: r.message || undefined,
+    meta: r.duration_ms != null ? `took ${formatDuration(r.duration_ms)}` : undefined,
+  });

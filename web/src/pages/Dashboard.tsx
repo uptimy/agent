@@ -73,7 +73,12 @@ export function Dashboard() {
   );
 }
 
-const healthcheckChange = { up: "is up", down: "went down", pending: "is pending", paused: "was paused" };
+const healthcheckChange = {
+  up: "is healthy",
+  down: "went down",
+  pending: "is waiting for its first check",
+  paused: "was paused",
+};
 
 /** "API went down", "Nightly backup missed its run due 03:00 CEST". */
 function ActivityRow({ e }: { e: ActivityItem }) {
