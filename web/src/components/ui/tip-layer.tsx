@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
  * Never use the native `title` attribute.
  */
 
-export type TipTone = "up" | "degraded" | "down" | "info" | "muted";
+export type TipTone = "up" | "minor" | "degraded" | "down" | "info" | "muted";
 
 export interface TipContent {
   title?: string;
@@ -55,6 +55,7 @@ const read = (el: HTMLElement): TipContent | null => {
 
 const TONE: Record<TipTone, string> = {
   up: "text-emerald-400",
+  minor: "text-yellow-400",
   degraded: "text-orange-400",
   down: "text-red-400",
   info: "text-sky-400",
