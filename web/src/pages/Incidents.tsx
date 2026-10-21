@@ -396,7 +396,7 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
     <button
       type="button"
       aria-label={label}
-      title={label}
+      data-tip={label}
       onClick={onClick}
       className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground [&_svg]:size-3.5"
     >

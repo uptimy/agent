@@ -96,7 +96,7 @@ export function ManagedIcon({ source }: { source: MonitorSource }) {
   if (source === "ui") return null;
   const Icon = source === "kubernetes" ? ShipWheel : FileCode2;
   return (
-    <span title={managedLabel[source]} className="text-muted-foreground">
+    <span data-tip={managedLabel[source]} className="text-muted-foreground">
       <Icon className="size-3.5" />
     </span>
   );
@@ -107,8 +107,8 @@ export function ManagedIcon({ source }: { source: MonitorSource }) {
 export function AcknowledgedBadge({ ack, long = false }: { ack: Acknowledgement; long?: boolean }) {
   return (
     <span
-      title={`Acknowledged by ${ack.by} ${timeAgo(ack.time)}: no more reminders for this outage`}
-      className="inline-flex items-center gap-1 rounded-full bg-paused/15 px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap text-paused"
+      data-tip={`Acknowledged by ${ack.by} ${timeAgo(ack.time)}: no more reminders for this outage`}
+      className="inline-flex items-center gap-1 rounded-full bg-paused/15 px-1.5 py-0.5 text-xs font-medium whitespace-nowrap text-paused"
     >
       <Eye className="size-3" /> {long ? `${ack.by} is on it · ${timeAgo(ack.time)}` : ack.by}
     </span>
@@ -118,8 +118,8 @@ export function AcknowledgedBadge({ ack, long = false }: { ack: Acknowledgement;
 export function MaintenanceBadge() {
   return (
     <span
-      title="In maintenance: it won't alert"
-      className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-medium text-sky-600 dark:text-sky-400"
+      data-tip="In maintenance: it won't alert"
+      className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-xs font-medium text-sky-600 dark:text-sky-400"
     >
       <Wrench className="size-3" /> Maintenance
     </span>

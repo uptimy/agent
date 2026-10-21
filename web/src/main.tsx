@@ -25,6 +25,7 @@ import "./index.css";
 import "@/lib/theme";
 import { ConfirmDialog } from "@/components/ui/confirm";
 import { Toaster } from "@/components/ui/toast";
+import TipLayer from "@/components/ui/tip-layer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 // Recharts is the bulk of the bundle; only load it on the page with the chart.
@@ -59,6 +60,7 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <ConfirmDialog />
       <Toaster />
+      <TipLayer />
       <BrowserRouter>
         {statusOnly ? (
           <Routes>

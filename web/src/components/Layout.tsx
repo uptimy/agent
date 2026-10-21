@@ -78,7 +78,7 @@ export function Layout() {
 
   return (
     <div className="min-h-dvh">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-(--sidebar-w,15rem) border-r-[1.5px] bg-card shadow-lg transition-[width] duration-[220ms] ease-[cubic-bezier(0.4,0,0.2,1)] md:block">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-(--sidebar-w,15rem) border-r-[1.5px] bg-card transition-[width] duration-[220ms] ease-[cubic-bezier(0.4,0,0.2,1)] md:block">
         <SidebarContent collapsed={collapsed} onOpenPalette={openPalette} />
       </aside>
 

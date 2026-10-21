@@ -298,11 +298,11 @@ function MonitorRow({ m, daysToShow }: { m: PublicMonitor; daysToShow: number })
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <h3 className="truncate text-sm font-semibold sm:text-base">{m.name}</h3>
-              <span className="hidden shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground sm:inline-flex">
+              <span className="hidden shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground sm:inline-flex">
                 {m.type_label}
               </span>
               {m.in_maintenance && (
-                <span className="inline-flex shrink-0 items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium text-sky-600 dark:text-sky-400">
+                <span className="inline-flex shrink-0 items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-medium text-sky-600 dark:text-sky-400">
                   Maintenance
                 </span>
               )}

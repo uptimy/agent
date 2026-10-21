@@ -242,7 +242,7 @@ function AddressToggle({
           role="radio"
           aria-checked={value === v}
           disabled={!!disabled}
-          title={disabled || undefined}
+          data-tip={disabled || undefined}
           onClick={() => onChange(v)}
           className={cn(
             "rounded px-2.5 py-1 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50",

@@ -383,7 +383,7 @@ function RunsCard({ id }: { id: number }) {
                       <td className="px-2 py-2.5 whitespace-nowrap tabular-nums">
                         {r.duration_ms == null ? "—" : formatDuration(r.duration_ms)}
                       </td>
-                      <td className="max-w-md truncate px-2 py-2.5 text-muted-foreground" title={r.message}>
+                      <td className="max-w-md truncate px-2 py-2.5 text-muted-foreground" data-tip={r.message}>
                         {r.message || "—"}
                       </td>
                     </tr>
