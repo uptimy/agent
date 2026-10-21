@@ -54,10 +54,10 @@ export function StatusEmpty({ icon, children }: { icon?: ReactNode; children: Re
 /** The bar colours, shown once per section. */
 export function UptimeLegend() {
   const items = [
-    { className: "bg-up", label: "No downtime" },
-    { className: "bg-minor", label: "< 20 min" },
-    { className: "bg-degraded", label: "< 1 h" },
-    { className: "bg-down", label: "1 h+" },
+    { className: "bg-up", label: "99.9%+" },
+    { className: "bg-minor", label: "99–99.9%" },
+    { className: "bg-degraded", label: "95–99%" },
+    { className: "bg-down", label: "<95%" },
     { className: "bg-no-data", label: "No data" },
   ];
   return (
