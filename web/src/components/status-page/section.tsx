@@ -60,7 +60,7 @@ export function UptimeLegend() {
     { className: "bg-no-data", label: "No data" },
   ];
   return (
-    <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+    <div className="flex items-center gap-3 text-xs text-muted-foreground">
       {items.map((i) => (
         <span key={i.label} className="flex items-center gap-1">
           <span className={cn("size-2 rounded-sm", i.className)} />

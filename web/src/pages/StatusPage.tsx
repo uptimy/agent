@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, AlertTriangle, CheckCircle, Clock, ExternalLink, XCircle, Wrench } from "lucide-react";
 import { api, type PublicMonitor, type PublicStatus, type Status } from "@/lib/api";
 import { cn, formatDateTime, timeAgo } from "@/lib/utils";
-import { Card } from "@/components/ui/card";
 import { DailyBars } from "@/components/status";
 import { PoweredBy } from "@/components/brand";
 import { MaintenanceCard } from "@/components/status-page/maintenance";
@@ -23,8 +22,6 @@ const banners: Record<
   {
     icon: typeof CheckCircle;
     iconColor: string;
-    iconBg: string;
-    tint: string;
     titleColor: string;
     title: string;
     subtitle: string;
@@ -33,8 +30,6 @@ const banners: Record<
   operational: {
     icon: CheckCircle,
     iconColor: "text-up",
-    iconBg: "bg-up/10",
-    tint: "bg-up/5",
     titleColor: brandText,
     title: "All systems operational",
     subtitle: "All systems are running smoothly",
@@ -42,8 +37,6 @@ const banners: Record<
   maintenance: {
     icon: Wrench,
     iconColor: "text-sky-500",
-    iconBg: "bg-sky-500/10",
-    tint: "bg-sky-500/5",
     titleColor: "text-sky-600 dark:text-sky-400",
     title: "Maintenance in progress",
     subtitle: "Some services are under planned maintenance",
@@ -51,8 +44,6 @@ const banners: Record<
   degraded: {
     icon: AlertTriangle,
     iconColor: "text-degraded",
-    iconBg: "bg-degraded/10",
-    tint: "bg-degraded/5",
     titleColor: "text-orange-600 dark:text-orange-400",
     title: "Some issues detected",
     subtitle: "Some services are experiencing issues",
@@ -60,8 +51,6 @@ const banners: Record<
   outage: {
     icon: XCircle,
     iconColor: "text-down",
-    iconBg: "bg-down/10",
-    tint: "bg-down/5",
     titleColor: "text-red-600 dark:text-red-400",
     title: "Outage detected",
     subtitle: "We're working to resolve the issues",
@@ -143,13 +132,13 @@ export function StatusPage() {
             )}
 
             {s.sections.length === 0 ? (
-              <div className="mt-10">
+              <div className="mt-16 lg:mt-20">
                 <StatusList>
                   <StatusEmpty icon={<AlertCircle className="size-4" />}>No monitors to show yet.</StatusEmpty>
                 </StatusList>
               </div>
             ) : (
-              <div className="mt-10 space-y-10">
+              <div className="mt-16 space-y-10 lg:mt-20">
                 {s.sections.map((section) => (
                   <StatusSection
                     key={section.name}
@@ -238,7 +227,7 @@ export function StatusPage() {
               </StatusSection>
             )}
 
-            <footer className="mt-10 flex flex-col items-center gap-3 text-xs text-muted-foreground">
+            <footer className="mt-12 flex flex-col items-center gap-3 border-t pt-8 text-xs text-muted-foreground">
               <div className="flex items-center gap-3">
                 <PoweredBy medium="status_page" />
                 <span className="text-border">·</span>
@@ -256,23 +245,18 @@ export function StatusPage() {
 /** In progress first, then upcoming, then recently completed. */
 const maintenanceRank = { active: 0, scheduled: 1, ended: 2 } as const;
 
+/** The overall status as a line on the page, as on the hosted status pages: not a box. */
 function Banner({ overall }: { overall: PublicStatus["overall"] }) {
   const b = banners[overall];
   const Icon = b.icon;
   return (
-    <Card className="overflow-hidden shadow-none">
-      <div className={cn("flex justify-center p-4 sm:p-6 lg:p-8", b.tint)}>
-        <div className="flex flex-col items-center gap-3 text-center sm:flex-row sm:gap-4 sm:text-left">
-          <div className={cn("shrink-0 rounded-full p-2 sm:p-2.5", b.iconBg)}>
-            <Icon className={cn("size-5 sm:size-6", b.iconColor)} />
-          </div>
-          <div>
-            <h2 className={cn("mb-0.5 text-lg font-semibold sm:text-xl lg:text-2xl", b.titleColor)}>{b.title}</h2>
-            <p className="text-sm text-muted-foreground">{b.subtitle}</p>
-          </div>
-        </div>
+    <div className="flex items-start gap-3 sm:gap-4">
+      <Icon className={cn("mt-0.5 size-7 shrink-0 sm:size-8", b.iconColor)} />
+      <div className="min-w-0">
+        <h2 className={cn("text-xl leading-tight font-semibold sm:text-2xl lg:text-3xl", b.titleColor)}>{b.title}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{b.subtitle}</p>
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -380,7 +364,13 @@ function StatusSkeleton() {
         <div className={cn(block, "h-10 w-40")} />
         <div className={cn(block, "h-9 w-24")} />
       </div>
-      <div className="h-24 rounded-xl border bg-card" />
+      <div className="flex items-start gap-3 sm:gap-4">
+        <div className="mt-0.5 size-7 shrink-0 animate-pulse rounded-full bg-muted sm:size-8" />
+        <div className="space-y-2">
+          <div className={cn(block, "h-6 w-56 sm:h-8 sm:w-72")} />
+          <div className={cn(block, "h-3.5 w-40 sm:w-52")} />
+        </div>
+      </div>
       {[0, 1].map((g) => (
         <div key={g}>
           <div className={cn(block, "mb-3 h-4 w-32")} />

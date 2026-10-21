@@ -6,6 +6,7 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ### Changed
 - **The UI has one box level, like Uptimy Cloud.** Sections are headings on the page and only their content is framed: no card around a titled block, no box inside a box. The figures at the top of the dashboard and of a monitor's page are one strip instead of separate tiles, the monitor lists drop their extra frame, setting rows share their section's frame with hairlines between them, the status page editor uses line tabs that keep their labels on phones, and its sections are a heading with one list each.
+- **The status page matches the hosted Uptimy status pages again:** the overall status is a coloured line instead of a tinted card (the loading placeholder too), the footer sits under a hairline, and the uptime legend is 12px.
 
 ## [0.3.0] - 2026-10-20
 
