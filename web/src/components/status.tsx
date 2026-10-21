@@ -64,13 +64,47 @@ const resultTip = (r: Result) =>
     meta: r.latency_ms > 0 ? formatLatency(r.latency_ms) : undefined,
   });
 
-/** Bar colour for a day's uptime: the style guide's health thresholds, 99% and 95%. */
-function dailyColor(ratio: number | null) {
-  if (ratio == null) return "bg-no-data";
-  const pct = ratio * 100;
-  if (pct >= 99) return "bg-up";
-  if (pct >= 95) return "bg-degraded";
-  return "bg-down";
+// A day is coloured by how long it was down, like Atlassian Statuspage and the
+// hosted Uptimy status pages: under a minute green, yellow up to 20 minutes,
+// orange up to an hour, red beyond. Minutes are estimated from the day's
+// ratio (share of 1,440). Uptime figures keep the 99% / 95% thresholds.
+const downMinutes = (ratio: number) => (1 - ratio) * 1440;
+
+const dayTone = (ratio: number): TipTone => {
+  const m = downMinutes(ratio);
+  return m < 1 ? "up" : m < 20 ? "minor" : m < 60 ? "degraded" : "down";
+};
+
+// A heartbeat's day counts runs, not minutes: every run on time is green, one
+// late or missed yellow, two or three orange, more red.
+const runsOff = (d: Daily) => Math.round((1 - (d.ratio ?? 1)) * d.count);
+
+const runDayTone = (d: Daily): TipTone => {
+  const n = runsOff(d);
+  return n === 0 ? "up" : n === 1 ? "minor" : n <= 3 ? "degraded" : "down";
+};
+
+const toneOf = (d: Daily, measure: "uptime" | "on time"): TipTone =>
+  !d.count ? "muted" : measure === "on time" ? runDayTone(d) : dayTone(d.ratio ?? 0);
+
+const dayBar: Record<TipTone, string> = {
+  up: "bg-up",
+  minor: "bg-minor",
+  degraded: "bg-degraded",
+  down: "bg-down",
+  info: "bg-sky-500",
+  muted: "bg-no-data",
+};
+
+/** "≈ 12 min down", "2 runs not on time"; nothing for a clean day. */
+function dayText(d: Daily, measure: "uptime" | "on time") {
+  if (measure === "on time") {
+    const n = runsOff(d);
+    return n ? `${n} run${n === 1 ? "" : "s"} not on time` : undefined;
+  }
+  const m = downMinutes(d.ratio ?? 1);
+  if (m < 1) return undefined;
+  return m < 90 ? `≈ ${Math.round(m)} min down` : `≈ ${Math.round(m / 60)} h down`;
 }
 
 /**
@@ -99,11 +133,7 @@ export function DailyBars({
         <span
           key={d.date}
           {...dayTip(d, measure)}
-          className={cn(
-            "rounded-[3px] transition hover:brightness-110",
-            barClassName,
-            dailyColor(d.count ? d.ratio : null),
-          )}
+          className={cn("rounded-[3px] transition hover:brightness-110", barClassName, dayBar[toneOf(d, measure)])}
         />
       ))}
     </div>
@@ -119,15 +149,14 @@ const dayTip = (d: Daily, measure: "uptime" | "on time") =>
       timeZone: "UTC",
     }),
     value: d.count ? formatUptime(d.ratio) : undefined,
-    tone: d.count ? healthTone(d.ratio ?? 0) : undefined,
+    tone: d.count ? toneOf(d, measure) : undefined,
+    body: d.count ? dayText(d, measure) : undefined,
     meta: d.count
       ? measure === "on time"
         ? `On time · ${d.count} run${d.count === 1 ? "" : "s"}`
         : "Uptime"
       : "No data yet",
   });
-
-const healthTone = (ratio: number): TipTone => (ratio >= 0.99 ? "up" : ratio >= 0.95 ? "degraded" : "down");
 
 const stateDot = {
   up: "bg-up",

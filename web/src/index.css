@@ -21,6 +21,7 @@
   --pending: #a1a1aa;
   --paused: #f59e0b;
   /* Status page palette, shared with upti.my-status */
+  --minor: #eab308;
   --degraded: #f97316;
   --no-data: #d4d4d4;
   /* Navigation, as in the app's sidebar (Sidebar.tsx NavItem): the active
@@ -73,6 +74,7 @@
   --color-down: var(--down);
   --color-pending: var(--pending);
   --color-paused: var(--paused);
+  --color-minor: var(--minor);
   --color-degraded: var(--degraded);
   --color-no-data: var(--no-data);
   --color-brand: var(--brand);
