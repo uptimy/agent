@@ -64,12 +64,12 @@ const resultTip = (r: Result) =>
     meta: r.latency_ms > 0 ? formatLatency(r.latency_ms) : undefined,
   });
 
-// A day's bar: green from 99.9%, yellow from 99%, orange from 95%, red below
+// A day's bar: green from 99.5%, yellow from 99%, orange from 95%, red below
 // (a healthcheck's uptime, or a heartbeat's runs on time). The same as the
 // hosted status pages and Cloud's strips; uptime figures keep 99% / 95%.
 const dayTone = (ratio: number): TipTone => {
   const pct = ratio * 100;
-  return pct >= 99.9 ? "up" : pct >= 99 ? "minor" : pct >= 95 ? "degraded" : "down";
+  return pct >= 99.5 ? "up" : pct >= 99 ? "minor" : pct >= 95 ? "degraded" : "down";
 };
 
 const toneOf = (d: Daily): TipTone => (d.count ? dayTone(d.ratio ?? 0) : "muted");
