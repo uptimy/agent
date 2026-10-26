@@ -121,6 +121,11 @@ func (d *Dispatcher) untilNext(ctx context.Context) time.Duration {
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context) {
+	// Loading under mu, which attempts hold while saving and freeing their
+	// route, means a free route's deliveries are never read from before its
+	// last attempt was saved: that stale row would be sent again.
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	due, err := d.store.DueDeliveries(ctx, time.Now(), batch)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -130,27 +135,21 @@ func (d *Dispatcher) dispatch(ctx context.Context) {
 	}
 	for _, o := range due {
 		r := route{o.Delivery.NotifierID, o.MonitorID}
-		d.mu.Lock()
 		if d.busy[r] {
-			d.mu.Unlock()
 			continue
 		}
 		d.busy[r] = true
-		d.mu.Unlock()
 		d.inflight.Add(1)
 		go func() {
 			defer d.inflight.Done()
-			d.attempt(ctx, o)
-			d.mu.Lock()
-			delete(d.busy, r)
-			d.mu.Unlock()
+			d.attempt(ctx, o, r)
 			d.Wake() // the next alert on this route may be due
 		}()
 	}
 }
 
-// attempt sends one delivery and records how it went.
-func (d *Dispatcher) attempt(ctx context.Context, o store.Outgoing) {
+// attempt sends one delivery, records how it went and frees its route.
+func (d *Dispatcher) attempt(ctx context.Context, o store.Outgoing, r route) {
 	del := o.Delivery
 	now := time.Now().UTC()
 	finish := func(state notify.DeliveryState, detail string) {
@@ -189,7 +188,11 @@ func (d *Dispatcher) attempt(ctx context.Context, o store.Outgoing) {
 		}
 	}
 	d.count(o.Notifier.Type, del)
-	if err := d.store.UpdateDelivery(context.WithoutCancel(ctx), del); err != nil {
+	d.mu.Lock()
+	err := d.store.UpdateDelivery(context.WithoutCancel(ctx), del)
+	delete(d.busy, r)
+	d.mu.Unlock()
+	if err != nil {
 		d.log.Error("saving an alert delivery", "err", err)
 		return
 	}
