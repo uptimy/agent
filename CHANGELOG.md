@@ -4,6 +4,8 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-26
+
 ### Changed
 - **The UI has one box level, like Uptimy Cloud.** Sections are headings on the page and only their content is framed: no card around a titled block, no box inside a box. The figures at the top of the dashboard and of a monitor's page are one strip instead of separate tiles, the monitor lists drop their extra frame, setting rows share their section's frame with hairlines between them, the status page editor uses line tabs that keep their labels on phones, and its sections are a heading with one list each.
 - **The status page matches the hosted Uptimy status pages again:** the overall status is a coloured line instead of a tinted card (the loading placeholder too), the footer sits under a hairline, and the uptime legend is 12px.
@@ -168,7 +170,9 @@ First public release.
 - API tokens (full or read-only) for scripts and CI.
 - Import monitors and notifications from Uptime Kuma (`kuma.db`), with a review step.
 
-[Unreleased]: https://github.com/uptimy/agent/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/uptimy/agent/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/uptimy/agent/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/uptimy/agent/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/uptimy/agent/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/uptimy/agent/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/uptimy/agent/compare/v0.1.6...v0.1.7
