@@ -9,6 +9,9 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 - **The status page matches the hosted Uptimy status pages again:** the overall status is a coloured line instead of a tinted card (the loading placeholder too), the footer sits under a hairline, and the uptime legend is 12px.
 - **Uptimy's style guide throughout.** Status words are Healthy, Down, Paused and Waiting (heartbeats: At risk when late), uptime always has two decimals (100.00%), response times read 278 ms and 1.8 s, and relative times are compact (5m ago, in 3h). Every tooltip is the one shared tooltip, like Cloud's, instead of the browser's slow native one. The healthcheck and heartbeat lists get status chips next to search. Daily bars are green from 99.5%, yellow from 99%, orange from 95% and red below, the same as the hosted Uptimy status pages and close to Atlassian Statuspage's colours, nothing is smaller than 12px, and the sidebar has no drop shadow.
 
+### Fixed
+- **An alert could be sent twice** when an attempt finished while the agent was already picking up the next due alerts: it was sent again from before that attempt, and its delivery then showed the wrong state and attempt count.
+
 ## [0.3.0] - 2026-10-20
 
 ### Added
