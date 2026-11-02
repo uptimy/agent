@@ -11,6 +11,7 @@ import {
   HeartPulse,
   LayoutDashboard,
   LogOut,
+  MessagesSquare,
   Moon,
   PanelLeftClose,
   Plus,
@@ -136,6 +137,13 @@ function Palette({ onClose }: { onClose: () => void }) {
         label: "Documentation",
         icon: BookOpen,
         action: () => window.open("https://github.com/uptimy/agent#readme", "_blank", "noopener"),
+        category: "help",
+      },
+      {
+        id: "discord",
+        label: "Discord Community",
+        icon: MessagesSquare,
+        action: () => window.open("https://www.upti.my/discord", "_blank", "noopener"),
         category: "help",
       },
       {

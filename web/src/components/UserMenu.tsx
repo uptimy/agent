@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import { BookOpen, Bug, ChevronsUpDown, Link2, LogOut, Monitor, Moon, Sun, UserRound } from "lucide-react";
+import {
+  BookOpen,
+  Bug,
+  ChevronsUpDown,
+  Link2,
+  LogOut,
+  MessagesSquare,
+  Monitor,
+  Moon,
+  Sun,
+  UserRound,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMe, useSignOut } from "@/components/AuthGate";
 import { useTheme, type ThemePreference } from "@/lib/theme";
@@ -109,6 +120,9 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
               rel="noopener"
             >
               <Link2 /> Uptimy Cloud
+            </a>
+            <a role="menuitem" className={item} href="https://www.upti.my/discord" target="_blank" rel="noopener">
+              <MessagesSquare /> Discord Community
             </a>
             <a
               role="menuitem"
