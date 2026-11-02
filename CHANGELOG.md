@@ -4,6 +4,9 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+### Added
+- **Discord Community** in the user menu and the command palette (⌘K): ask questions and get help from other Uptimy users and the team. Bugs still go to GitHub issues.
+
 ## [0.3.1] - 2026-10-26
 
 ### Changed
