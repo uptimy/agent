@@ -115,6 +115,13 @@ A monitor can't tell you it's down itself. Connect the agent to a free [Uptimy](
 - [Uptimy Cloud](docs/uptimy-cloud.md)
 - [Railway template](deploy/railway.md)
 
+## Help & support
+
+- **Questions and setup help:** ask in [Discord](https://www.upti.my/discord), in the **#help** forum with the **Agent** tag. Say which version you run (bottom of the sidebar, or `uptimy-agent --version`) and how it's installed (Docker, Kubernetes or Railway).
+- **Bugs and feature requests:** [GitHub issues](https://github.com/uptimy/agent/issues/new/choose).
+- **Security issues:** report them privately, see [SECURITY.md](SECURITY.md).
+- **Uptimy Cloud account or billing:** [support@upti.my](mailto:support@upti.my).
+
 ## Contributing
 
 ```bash
