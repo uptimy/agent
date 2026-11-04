@@ -17,7 +17,7 @@ import (
 
 // fakeUptimy stands in for api.upti.my and heartbeats.upti.my, following the
 // real endpoints' contracts (POST /oauth/token, GET/DELETE /v1/api/api-key,
-// the API-key heartbeat routes, and check-ins on /v1/monitors/:publicId).
+// and the API-key heartbeat routes).
 type fakeUptimy struct {
 	*httptest.Server
 	mu         sync.Mutex
@@ -27,7 +27,6 @@ type fakeUptimy struct {
 	heartbeats map[string]string // clientRef -> uuid
 	monitors   map[string]*fakeHeartbeat
 	deleted    []string
-	checkIns   int
 	down       bool
 	// Cloud sync (upti.my-api agent routes, upti.my-ingest).
 	locationDeleted bool
@@ -83,16 +82,6 @@ func (f *fakeUptimy) serve(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	if f.down {
 		http.Error(w, "down", http.StatusServiceUnavailable)
-		return
-	}
-	if strings.HasPrefix(r.URL.Path, "/v1/monitors/") {
-		// Like the real service, a paused heartbeat rejects check-ins.
-		if hb := f.monitors[strings.TrimPrefix(r.URL.Path, "/v1/monitors/pub-")]; hb != nil && hb.paused {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		f.checkIns++
-		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	if r.URL.Path == "/oauth/token" {
