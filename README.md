@@ -70,6 +70,8 @@ helm install uptimy-agent oci://ghcr.io/uptimy/charts/uptimy-agent -n monitoring
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/uptimy-agent?referralCode=-G2iM8&utm_medium=integration&utm_source=template&utm_campaign=agent-readme)
 
+Step by step, with every variable: [Deploy Uptimy Agent on Railway](https://www.upti.my/docs/guides/deploy-on-railway?utm_source=github&utm_medium=readme&utm_campaign=agent-readme).
+
 Or with [Docker Compose](docker-compose.yml).
 
 ## What it does
