@@ -23,7 +23,7 @@ To set it up step by step, from deploying to importing a project's services, see
 
 | Variable | Template value | Why |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | `${{secret(24)}}` | Required. Password for the admin user, generated per deploy and visible in the service's Variables tab. While it's set, the password is changed here, not in the UI; redeploying with a new value resets it. More users can be added in the UI |
+| `ADMIN_PASSWORD` | `${{secret(24)}}` | Required. Password for the admin user, generated once when the template is deployed and visible in the service's Variables tab. While it's set, the password is changed here, not in the UI; redeploying with a new value resets it. More users can be added in the UI |
 | `RAILWAY_RUN_UID` | `0` | Required. Railway volumes are mounted as root; the image runs as a non-root user by default |
 | `ADMIN_USERNAME` | `admin` | Optional. The admin's username |
 
@@ -38,13 +38,13 @@ Railway's `PORT` is picked up automatically.
 
 After deploying, **Settings → Import from Railway** creates a monitor for each service in the project from a project token, using the private addresses below.
 
-Services in the same project can reach each other over private networking at `<service>.railway.internal`. Use reference variables in `MONITORS_YAML` so targets follow renames:
+Services in the same project can reach each other over private networking at `<service>.railway.internal`. Use reference variables in `MONITORS_YAML` so targets follow the service's private hostname:
 
 ```yaml
 healthchecks:
   - name: API
     type: http
-    target: http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}/health
+    target: http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8080/health   # the port api listens on
   - name: Postgres
     type: postgres
     target: ${POSTGRES_URL}
