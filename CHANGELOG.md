@@ -7,6 +7,9 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 ### Added
 - **Discord Community** in the user menu and the command palette (⌘K): ask questions and get help from other Uptimy users and the team. Bugs still go to GitHub issues.
 
+### Fixed
+- **A CNAME check on a domain with no CNAME record passed** whenever the domain resolved to addresses: the lookup returned the domain's own name, which counted as the answer. It's now Down, with a message like `www.example.com has no CNAME record`. The target is shown without its trailing dot.
+
 ## [0.3.1] - 2026-10-26
 
 ### Changed

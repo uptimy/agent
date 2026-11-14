@@ -42,7 +42,13 @@ func dns(ctx context.Context, m monitor.Check) Outcome {
 	case "CNAME":
 		var cname string
 		cname, err = r.LookupCNAME(ctx, m.Target)
-		answers = append(answers, cname)
+		if err == nil {
+			target, ok := cnameTarget(m.Target, cname)
+			if !ok {
+				return Outcome{Message: m.Target + " has no CNAME record", ErrorClass: classAssertion}
+			}
+			answers = append(answers, target)
+		}
 	case "MX":
 		var mxs []*net.MX
 		mxs, err = r.LookupMX(ctx, m.Target)
@@ -69,4 +75,15 @@ func dns(ctx context.Context, m monitor.Check) Outcome {
 		return Outcome{Message: fmt.Sprintf("expected %q, got %s", m.Config.Expected, joined), ErrorClass: classAssertion}
 	}
 	return Outcome{OK: true, Message: joined}
+}
+
+// cnameTarget is the target LookupCNAME found, without its trailing dot.
+// For a domain with no CNAME record that resolves to addresses, LookupCNAME
+// returns the domain's own name instead of an error; that's no CNAME.
+func cnameTarget(domain, cname string) (string, bool) {
+	target := strings.TrimSuffix(cname, ".")
+	if target == "" || strings.EqualFold(target, strings.TrimSuffix(domain, ".")) {
+		return "", false
+	}
+	return target, true
 }
