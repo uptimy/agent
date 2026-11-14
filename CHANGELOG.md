@@ -7,6 +7,10 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 ### Added
 - **Discord Community** in the user menu and the command palette (⌘K): ask questions and get help from other Uptimy users and the team. Bugs still go to GitHub issues.
 
+### Fixed
+- **A CNAME check on a domain with no CNAME record passed** whenever the domain resolved to addresses: the lookup returned the domain's own name, which counted as the answer. It's now Down, with a message like `www.example.com has no CNAME record`.
+- **CNAME checks compare with the domain's own record.** The agent asks the check's resolver, or the servers in `/etc/resolv.conf`, for the CNAME record itself and compares the expected value with its target, the value your DNS provider shows. In a chain that's the first link. On Windows, which has no `resolv.conf`, a check without a resolver uses the system lookup, which can return the end of the chain.
+
 ## [0.3.1] - 2026-10-26
 
 ### Changed

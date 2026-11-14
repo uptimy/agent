@@ -2,6 +2,7 @@ package checks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -15,15 +16,19 @@ func init() {
 
 func dns(ctx context.Context, m monitor.Check) Outcome {
 	r := net.DefaultResolver
+	var servers []string // who CNAME checks ask: the check's resolver, else resolv.conf's
 	if m.Config.Resolver != "" {
 		server := m.Config.Resolver
 		if !strings.Contains(server, ":") {
 			server += ":53"
 		}
+		servers = []string{server}
 		r = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, network, server)
 		}}
+	} else {
+		servers = systemNameservers()
 	}
 
 	var answers []string
@@ -40,9 +45,21 @@ func dns(ctx context.Context, m monitor.Check) Outcome {
 			answers = append(answers, ip.String())
 		}
 	case "CNAME":
+		// The domain's own record, not the end of its chain (cname.go).
 		var cname string
-		cname, err = r.LookupCNAME(ctx, m.Target)
-		answers = append(answers, cname)
+		if len(servers) > 0 {
+			cname, err = lookupCNAMERecord(ctx, servers, m.Target)
+		} else if cname, err = r.LookupCNAME(ctx, m.Target); err == nil {
+			cname, err = cnameFromCanonical(m.Target, cname)
+		}
+		switch {
+		case errors.Is(err, errNoCNAME):
+			return Outcome{Message: m.Target + " has no CNAME record", ErrorClass: classAssertion}
+		case err != nil:
+			err = fmt.Errorf("lookup %s: %w", m.Target, err)
+		default:
+			answers = append(answers, cname)
+		}
 	case "MX":
 		var mxs []*net.MX
 		mxs, err = r.LookupMX(ctx, m.Target)
