@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { TrainFront } from "lucide-react";
-import { api, type RailwayImportResult, type RailwayPlan, type RailwayService } from "@/lib/api";
+import { Server, TrainFront, type LucideIcon } from "lucide-react";
+import { api, type HostImportResult, type HostPlan, type HostService, type ImportHost } from "@/lib/api";
 import { useCheckTypeLabel } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -10,13 +10,48 @@ import { Input, PasswordInput } from "@/components/ui/input";
 import { ErrorNote } from "@/components/Layout";
 import { ImportResult, Item, ItemList, SkippedList } from "@/components/ImportReview";
 
+const HOSTS: Record<
+  ImportHost,
+  {
+    label: string;
+    icon: LucideIcon;
+    description: string;
+    placeholder: string;
+    inputLabel: string;
+    help: string;
+    group: string;
+  }
+> = {
+  railway: {
+    label: "Railway",
+    icon: TrainFront,
+    description: "Monitor every service in a Railway project, privately when the agent runs in it.",
+    placeholder: "Project token",
+    inputLabel: "Railway project token",
+    help: "Railway → Project → Settings → Tokens",
+    group: "project",
+  },
+  render: {
+    label: "Render",
+    icon: Server,
+    description:
+      "Monitor every Render service the key can see, privately when the agent runs in the same workspace and region.",
+    placeholder: "API key",
+    inputLabel: "Render API key",
+    help: "Render → Account Settings → API Keys",
+    group: "workspace",
+  },
+};
+
 /**
- * Import from Railway: paste a project token, review a monitor per service,
- * choose what to import. The token is only sent to plan, and never kept.
+ * Import from Railway or Render: paste a project token or API key, review a
+ * monitor per service, choose what to import. The token is only sent to
+ * plan, and never kept.
  */
-export function RailwayImportCard() {
-  const [plan, setPlan] = useState<RailwayPlan | null>(null);
-  const [result, setResult] = useState<RailwayImportResult | null>(null);
+export function HostImportCard({ host }: { host: ImportHost }) {
+  const copy = HOSTS[host];
+  const [plan, setPlan] = useState<HostPlan | null>(null);
+  const [result, setResult] = useState<HostImportResult | null>(null);
   const reset = () => {
     setPlan(null);
     setResult(null);
@@ -26,11 +61,9 @@ export function RailwayImportCard() {
     <Card section>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <TrainFront className="size-4" /> Import from Railway
+          <copy.icon className="size-4" /> Import from {copy.label}
         </CardTitle>
-        <CardDescription>
-          Monitor every service in a Railway project, privately when the agent runs in it.
-        </CardDescription>
+        <CardDescription>{copy.description}</CardDescription>
       </CardHeader>
       <CardContent>
         {result ? (
@@ -45,18 +78,19 @@ export function RailwayImportCard() {
             }
           />
         ) : plan ? (
-          <PlanReview plan={plan} onCancel={reset} onImported={setResult} />
+          <PlanReview host={host} plan={plan} onCancel={reset} onImported={setResult} />
         ) : (
-          <EnterToken onPlan={setPlan} />
+          <EnterToken host={host} onPlan={setPlan} />
         )}
       </CardContent>
     </Card>
   );
 }
 
-function EnterToken({ onPlan }: { onPlan: (p: RailwayPlan) => void }) {
+function EnterToken({ host, onPlan }: { host: ImportHost; onPlan: (p: HostPlan) => void }) {
+  const copy = HOSTS[host];
   const [token, setToken] = useState("");
-  const read = useMutation({ mutationFn: (t: string) => api.planRailwayImport(t), onSuccess: onPlan });
+  const read = useMutation({ mutationFn: (t: string) => api.planHostImport(host, t), onSuccess: onPlan });
   return (
     <form
       className="flex flex-col gap-3 text-sm"
@@ -68,8 +102,8 @@ function EnterToken({ onPlan }: { onPlan: (p: RailwayPlan) => void }) {
       <div className="flex flex-col gap-2 sm:flex-row">
         <PasswordInput
           autoComplete="off"
-          placeholder="Project token"
-          aria-label="Railway project token"
+          placeholder={copy.placeholder}
+          aria-label={copy.inputLabel}
           value={token}
           onChange={(e) => setToken(e.target.value)}
           className="sm:max-w-sm"
@@ -78,7 +112,7 @@ function EnterToken({ onPlan }: { onPlan: (p: RailwayPlan) => void }) {
           {read.isPending ? "Reading services…" : "Preview services"}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">Railway → Project → Settings → Tokens</p>
+      <p className="text-xs text-muted-foreground">{copy.help}</p>
       <ErrorNote error={read.error} />
     </form>
   );
@@ -93,21 +127,24 @@ function validPort(port: string) {
 }
 
 /** The HTTP check's URL for the chosen address, or "" while a private one has no port. */
-function target(s: RailwayService, e: Edit) {
+function target(s: HostService, e: Edit) {
   const path = e.path.startsWith("/") ? e.path : `/${e.path}`;
   if (e.address === "public") return `https://${s.public_host}${path}`;
   return validPort(e.port) ? `http://${s.private_host}:${e.port}${path}` : "";
 }
 
 function PlanReview({
+  host,
   plan,
   onCancel,
   onImported,
 }: {
-  plan: RailwayPlan;
+  host: ImportHost;
+  plan: HostPlan;
   onCancel: () => void;
-  onImported: (r: RailwayImportResult) => void;
+  onImported: (r: HostImportResult) => void;
 }) {
+  const copy = HOSTS[host];
   const qc = useQueryClient();
   const typeLabel = useCheckTypeLabel();
   const [selected, setSelected] = useState(() => new Set(plan.services.map((s) => s.service_id)));
@@ -129,14 +166,14 @@ function PlanReview({
 
   const chosen = plan.services
     .filter((s) => selected.has(s.service_id))
-    .map((s): RailwayService => {
+    .map((s): HostService => {
       const e = edits[s.service_id];
       if (!e.address || !s.monitor.check) return s;
       return { ...s, monitor: { ...s.monitor, check: { ...s.monitor.check, target: target(s, e) } } };
     });
   const missingPort = chosen.some((s) => s.monitor.check && !s.monitor.check.target);
   const apply = useMutation({
-    mutationFn: () => api.applyRailwayImport(chosen),
+    mutationFn: () => api.applyHostImport(host, chosen),
     onSuccess: (r) => {
       qc.invalidateQueries();
       onImported(r);
@@ -148,7 +185,8 @@ function PlanReview({
       <p className="text-sm text-muted-foreground">
         {plan.project_name}
         {plan.environment_name && ` · ${plan.environment_name}`}
-        {!plan.same_project && " · the agent isn't in this project, so services are checked at their public domains"}
+        {!plan.same_project &&
+          ` · the agent isn't in this ${copy.group}, so services are checked at their public addresses`}
       </p>
       {plan.services.length > 0 && (
         <ItemList title={`Services (${plan.services.length})`}>
@@ -171,7 +209,10 @@ function PlanReview({
                     <AddressToggle
                       value={e.address}
                       onChange={(address) => edit(s.service_id, { address })}
-                      privateDisabled={!plan.same_project && "The agent isn't in this project"}
+                      privateDisabled={
+                        (!plan.same_project && `The agent isn't in this ${copy.group}`) ||
+                        (!s.private_host && "Not on the agent's private network")
+                      }
                       publicDisabled={!s.public_host && "No public domain"}
                     />
                     {e.address === "private" && (
@@ -201,7 +242,7 @@ function PlanReview({
       )}
       {plan.skipped.length > 0 && <SkippedList items={plan.skipped} title="Won't be imported" />}
       {plan.services.length === 0 && (
-        <p className="text-sm text-muted-foreground">Nothing in this project to import.</p>
+        <p className="text-sm text-muted-foreground">Nothing in this {copy.group} to import.</p>
       )}
 
       <ErrorNote error={apply.error} />

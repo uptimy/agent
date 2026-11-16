@@ -44,6 +44,9 @@ type Server struct {
 	// RailwayURL is Railway's API for importing from Railway; empty is
 	// railway.APIURL.
 	RailwayURL string
+	// RenderURL is Render's API for importing from Render; empty is
+	// render.APIURL.
+	RenderURL string
 
 	limiter *loginLimiter
 	connect connectFlows
@@ -161,7 +164,9 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	admin("POST /api/import/kuma", s.planKumaImport)
 	admin("POST /api/import/kuma/apply", s.applyKumaImport)
 	admin("POST /api/import/railway", s.planRailwayImport)
-	admin("POST /api/import/railway/apply", s.applyRailwayImport)
+	admin("POST /api/import/railway/apply", s.applyHostImport)
+	admin("POST /api/import/render", s.planRenderImport)
+	admin("POST /api/import/render/apply", s.applyHostImport)
 
 	auth("GET /api/notifiers", s.listNotifiers)
 	auth("POST /api/notifiers", s.createNotifier)

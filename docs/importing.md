@@ -13,3 +13,7 @@ You'll see what each monitor and notification becomes, and choose what to import
 ## From Railway
 
 Under **Settings → Import from Railway**, paste a project token (Railway → Project → Settings → Tokens) to get a monitor for each service in its environment: an HTTP check for web services (over private networking when the agent runs in that project, otherwise at their public domain), a database check for Postgres, MySQL, MariaDB and Redis through a `${VAR}` you add to the agent, and a heartbeat for cron services. You review them first; the token is only used for that and isn't stored. Importing again skips services already imported.
+
+## From Render
+
+Under **Settings → Import from Render**, paste an API key (Render → Account Settings → API Keys) to get a monitor for each service the key can see, across all your Render workspaces: an HTTP check for web services and static sites at their custom domain or `onrender.com` address, and a heartbeat for cron jobs (Render runs them in UTC). When the agent runs on Render, services in the same workspace and region can be checked over the private network instead, and private services are checked only that way; free web services can't receive private traffic. Background workers have no address to check, and suspended services are skipped. Render's Postgres and Key Value aren't listed: add them as database checks with their internal URL in a variable. You review everything first; the key is only used for that and isn't stored. Importing again skips services already imported.

@@ -5,6 +5,8 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 ## [Unreleased]
 
 ### Added
+- **Import from Render** under Settings: paste a Render API key and get a monitor for each service, an HTTP check for web services and static sites and a heartbeat for cron jobs. When the agent runs on Render, services in its workspace and region can be checked over the private network, private services included. Same review as the Railway import; the key is never stored.
+- **Render Blueprint** (`render.yaml`): the agent on a Starter instance with a disk for its data. See [deploy/render.md](deploy/render.md).
 - **Discord Community** in the user menu and the command palette (⌘K): ask questions and get help from other Uptimy users and the team. Bugs still go to GitHub issues.
 
 ### Fixed

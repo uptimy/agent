@@ -190,3 +190,52 @@ func TestRailwayImport(t *testing.T) {
 		t.Fatalf("the token was logged: %s", logs.String())
 	}
 }
+
+func TestRenderImport(t *testing.T) {
+	const key = "rnd_key_123"
+	t.Setenv("RENDER_SERVICE_ID", "srv-agent")
+	render := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Header.Get("Authorization") != "Bearer "+key:
+			w.WriteHeader(http.StatusUnauthorized)
+		case r.URL.Path == "/owners":
+			w.Write([]byte(`[{"owner":{"id":"tea-1","name":"Acme"}}]`))
+		case r.URL.Path == "/services":
+			w.Write([]byte(`[
+				{"service":{"id":"srv-api","name":"API","slug":"api-x1","ownerId":"tea-1","type":"web_service","serviceDetails":{"url":"https://api-x1.onrender.com","region":"oregon","plan":"starter","healthCheckPath":"/healthz"}}},
+				{"service":{"id":"crn-backup","name":"Backup","ownerId":"tea-1","type":"cron_job","serviceDetails":{"schedule":"0 3 * * *"}}},
+				{"service":{"id":"srv-agent","name":"Agent","ownerId":"tea-1","type":"web_service","serviceDetails":{"url":"https://agent.onrender.com","region":"oregon","plan":"starter"}}}]`))
+		default:
+			w.Write([]byte(`[]`))
+		}
+	}))
+	defer render.Close()
+
+	c := newTestServer(t)
+	c.srv.RenderURL = render.URL
+	c.login("admin", adminPassword)
+
+	if code, body := c.do("POST", "/api/import/render", map[string]string{"token": "wrong"}); code != 400 || body["error"] != "Render didn't accept this API key" {
+		t.Fatalf("wrong key: %d %v", code, body)
+	}
+	code, plan := c.do("POST", "/api/import/render", map[string]string{"token": key})
+	if raw, _ := json.Marshal(plan); code != 200 || strings.Contains(string(raw), key) {
+		t.Fatalf("plan: %d %s", code, raw)
+	}
+	services := plan["services"].([]any)
+	if plan["same_project"] != true || len(services) != 2 || len(plan["skipped"].([]any)) != 1 {
+		t.Fatalf("plan: %v", plan)
+	}
+	if target := services[0].(map[string]any)["monitor"].(map[string]any)["check"].(map[string]any)["target"]; target != "https://api-x1.onrender.com/healthz" {
+		t.Fatalf("api target: %v", target)
+	}
+
+	code, result := c.do("POST", "/api/import/render/apply", map[string]any{"services": services})
+	if code != 200 || len(result["monitors"].([]any)) != 2 {
+		t.Fatalf("apply: %d %v", code, result)
+	}
+	// Planning again skips what's imported.
+	if _, again := c.do("POST", "/api/import/render", map[string]string{"token": key}); len(again["services"].([]any)) != 0 {
+		t.Fatalf("second plan: %v", again)
+	}
+}

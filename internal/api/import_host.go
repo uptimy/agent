@@ -7,12 +7,14 @@ import (
 
 	"github.com/uptimy/agent/internal/monitor"
 	"github.com/uptimy/agent/internal/railway"
+	"github.com/uptimy/agent/internal/render"
 )
 
-// Importing from Railway works like importing from Kuma: the project token
-// plans the monitors (planRailwayImport), then the reviewed ones are sent
-// back (applyRailwayImport). The token is used for the plan only, and
-// never stored or logged.
+// Importing from Railway or Render works like importing from Kuma: the
+// project token or API key plans the monitors (planRailwayImport,
+// planRenderImport), then the reviewed ones are sent back
+// (applyHostImport). The token is used for the plan only, and never stored
+// or logged.
 
 func (s *Server) planRailwayImport(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -34,10 +36,45 @@ func (s *Server) planRailwayImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	if !s.withoutImported(w, r, &plan.Services, &plan.Skipped) {
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+func (s *Server) planRenderImport(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token string `json:"token"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if strings.TrimSpace(in.Token) == "" {
+		writeError(w, http.StatusBadRequest, "enter an API key")
+		return
+	}
+	plan, err := render.Read(r.Context(), render.NewClient(s.RenderURL, strings.TrimSpace(in.Token)), render.SelfFromEnv())
+	switch {
+	case errors.Is(err, render.ErrToken):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !s.withoutImported(w, r, &plan.Services, &plan.Skipped) {
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+// withoutImported moves services whose monitor already exists to skipped.
+// False when it answered with an error.
+func (s *Server) withoutImported(w http.ResponseWriter, r *http.Request, services *[]railway.Service, skipped *[]railway.Skipped) bool {
 	existing, err := s.Store.ListMonitors(r.Context())
 	if err != nil {
 		s.internalError(w, r, err)
-		return
+		return false
 	}
 	imported := map[string]bool{}
 	for _, m := range existing {
@@ -45,19 +82,20 @@ func (s *Server) planRailwayImport(w http.ResponseWriter, r *http.Request) {
 			imported[m.SourceRef] = true
 		}
 	}
-	services := plan.Services[:0]
-	for _, svc := range plan.Services {
+	kept := (*services)[:0]
+	for _, svc := range *services {
 		if imported[svc.Monitor.SourceRef] {
-			plan.Skipped = append(plan.Skipped, railway.Skipped{What: "service", Name: svc.Monitor.Name, Reason: "already imported"})
+			*skipped = append(*skipped, railway.Skipped{What: "service", Name: svc.Monitor.Name, Reason: "already imported"})
 			continue
 		}
-		services = append(services, svc)
+		kept = append(kept, svc)
 	}
-	plan.Services = services
-	writeJSON(w, http.StatusOK, plan)
+	*services = kept
+	return true
 }
 
-func (s *Server) applyRailwayImport(w http.ResponseWriter, r *http.Request) {
+// applyHostImport creates the reviewed monitors of a Railway or Render plan.
+func (s *Server) applyHostImport(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Services []railway.Service `json:"services"`
 	}
