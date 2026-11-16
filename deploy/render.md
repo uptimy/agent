@@ -1,5 +1,7 @@
 # Render Blueprint
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/uptimy/agent)
+
 Uptimy Agent deploys to Render from [`render.yaml`](../render.yaml) at the root
 of this repo. This page holds its settings, for maintaining the Blueprint or
 setting the agent up by hand.

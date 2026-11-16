@@ -4,9 +4,11 @@ Notable changes to Uptimy Agent. The format follows [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-16
+
 ### Added
 - **Import from Render** under Settings: paste a Render API key and get a monitor for each service, an HTTP check for web services and static sites and a heartbeat for cron jobs. When the agent runs on Render, services in its workspace and region can be checked over the private network, private services included. Same review as the Railway import; the key is never stored.
-- **Render Blueprint** (`render.yaml`): the agent on a Starter instance with a disk for its data. See [deploy/render.md](deploy/render.md).
+- **Render Blueprint** (`render.yaml`): deploy the agent to Render in one click, on a Starter instance with a disk for its data. See [deploy/render.md](deploy/render.md).
 - **Discord Community** in the user menu and the command palette (⌘K): ask questions and get help from other Uptimy users and the team. Bugs still go to GitHub issues.
 
 ### Fixed
@@ -178,7 +180,8 @@ First public release.
 - API tokens (full or read-only) for scripts and CI.
 - Import monitors and notifications from Uptime Kuma (`kuma.db`), with a review step.
 
-[Unreleased]: https://github.com/uptimy/agent/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/uptimy/agent/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/uptimy/agent/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/uptimy/agent/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/uptimy/agent/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/uptimy/agent/compare/v0.1.8...v0.2.0

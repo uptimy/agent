@@ -72,6 +72,12 @@ helm install uptimy-agent oci://ghcr.io/uptimy/charts/uptimy-agent -n monitoring
 
 Step by step, with every variable: [Deploy Uptimy Agent on Railway](https://www.upti.my/docs/guides/deploy-on-railway?utm_source=github&utm_medium=readme&utm_campaign=agent-readme).
 
+### Render
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/uptimy/agent)
+
+A Starter instance with a disk for the agent's data. Settings and variables: [Render Blueprint](deploy/render.md).
+
 Or with [Docker Compose](docker-compose.yml).
 
 ## What it does
