@@ -4,7 +4,7 @@ import { monitorPath } from "@/lib/monitors";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
-// The review and result steps the importers share (Uptime Kuma, Railway).
+// The review and result steps the importers share (Uptime Kuma, Railway, Render).
 
 type ImportedMonitor = { id: number; name: string; kind: MonitorKind };
 

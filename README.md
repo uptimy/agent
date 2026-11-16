@@ -113,9 +113,10 @@ A monitor can't tell you it's down itself. Connect the agent to a free [Uptimy](
 - [Alerts](docs/alerts.md): routing, retries, reminders and the webhook format
 - [Status page](docs/status-page.md): maintenance, incidents and badges
 - [API and metrics](docs/api.md): API tokens and Prometheus
-- [Importing](docs/importing.md): from Uptime Kuma and Railway
+- [Importing](docs/importing.md): from Uptime Kuma, Railway and Render
 - [Uptimy Cloud](docs/uptimy-cloud.md)
 - [Railway template](deploy/railway.md)
+- [Render Blueprint](deploy/render.md)
 
 ## Help & support
 

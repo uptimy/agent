@@ -372,17 +372,24 @@ export interface KumaImportResult {
   skipped: ImportSkipped[];
 }
 
-/** What a Railway environment's services would become (internal/railway.Plan). */
-export interface RailwayPlan {
+/** A host the agent imports services from. */
+export type ImportHost = "railway" | "render";
+
+/**
+ * What a Railway environment's or Render account's services would become
+ * (internal/railway.Plan, internal/render.Plan).
+ */
+export interface HostPlan {
+  /** The Railway project, or the Render workspaces */
   project_name: string;
   environment_name: string;
-  /** The agent runs in this project and environment, so it can check services privately. */
+  /** The agent runs alongside the services, so it can check them privately. */
   same_project: boolean;
-  services: RailwayService[];
+  services: HostService[];
   skipped: ImportSkipped[];
 }
 
-export interface RailwayService {
+export interface HostService {
   service_id: string;
   monitor: Monitor;
   notes: string[] | null;
@@ -390,12 +397,12 @@ export interface RailwayService {
   address?: "private" | "public";
   private_host?: string;
   public_host?: string;
-  /** 0 or missing when Railway doesn't know it; a private target needs one. */
+  /** 0 or missing when the host doesn't know it; a private target needs one. */
   port?: number;
   path?: string;
 }
 
-export interface RailwayImportResult {
+export interface HostImportResult {
   monitors: { id: number; name: string; kind: MonitorKind }[];
   skipped: ImportSkipped[];
 }
@@ -741,9 +748,9 @@ export const api = {
   planKumaImport: (file: File) => upload<KumaPlan>("/api/import/kuma", file),
   applyKumaImport: (plan: Pick<KumaPlan, "sections" | "monitors" | "notifiers">) =>
     request<KumaImportResult>("POST", "/api/import/kuma/apply", plan),
-  planRailwayImport: (token: string) => request<RailwayPlan>("POST", "/api/import/railway", { token }),
-  applyRailwayImport: (services: RailwayService[]) =>
-    request<RailwayImportResult>("POST", "/api/import/railway/apply", { services }),
+  planHostImport: (host: ImportHost, token: string) => request<HostPlan>("POST", `/api/import/${host}`, { token }),
+  applyHostImport: (host: ImportHost, services: HostService[]) =>
+    request<HostImportResult>("POST", `/api/import/${host}/apply`, { services }),
   activity: () => request<ActivityItem[]>("GET", "/api/activity"),
 
   notifiers: () => request<Notifier[]>("GET", "/api/notifiers"),

@@ -1,0 +1,23 @@
+# Render Blueprint for Uptimy Agent: one web service from the published image,
+# with a disk for its SQLite database. See deploy/render.md.
+services:
+  - type: web
+    name: uptimy-agent
+    runtime: image
+    image:
+      url: ghcr.io/uptimy/agent:latest
+    # Disks need a paid instance, and free web services sleep when idle,
+    # which would stop the checks.
+    plan: starter
+    healthCheckPath: /healthz
+    # SQLite has a single writer
+    numInstances: 1
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
