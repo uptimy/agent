@@ -78,6 +78,10 @@ Step by step, with every variable: [Deploy Uptimy Agent on Railway](https://www.
 
 A Starter instance with a disk for the agent's data. Settings and variables: [Render Blueprint](deploy/render.md).
 
+### Dokploy
+
+In a Dokploy project, **Create Service → Template → Uptimy Agent**. Step by step: [Deploy Uptimy Agent on Dokploy](https://www.upti.my/docs/guides/deploy-on-dokploy?utm_source=github&utm_medium=readme&utm_campaign=agent-readme).
+
 Or with [Docker Compose](docker-compose.yml).
 
 ## What it does
@@ -123,10 +127,11 @@ A monitor can't tell you it's down itself. Connect the agent to a free [Uptimy](
 - [Uptimy Cloud](docs/uptimy-cloud.md)
 - [Railway template](deploy/railway.md)
 - [Render Blueprint](deploy/render.md)
+- [Dokploy template](deploy/dokploy.md)
 
 ## Help & support
 
-- **Questions and setup help:** ask in [Discord](https://www.upti.my/discord), in the **#help** forum with the **Agent** tag. Say which version you run (bottom of the sidebar, or `uptimy-agent --version`) and how it's installed (Docker, Kubernetes or Railway).
+- **Questions and setup help:** ask in [Discord](https://www.upti.my/discord), in the **#help** forum with the **Agent** tag. Say which version you run (bottom of the sidebar, or `uptimy-agent --version`) and how it's installed (Docker, Kubernetes, Railway, Render or Dokploy).
 - **Bugs and feature requests:** [GitHub issues](https://github.com/uptimy/agent/issues/new/choose).
 - **Security issues:** report them privately, see [SECURITY.md](SECURITY.md).
 - **Uptimy Cloud account or billing:** [support@upti.my](mailto:support@upti.my).
