@@ -65,8 +65,7 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 		var body struct {
 			Message string `json:"message"`
 		}
-		json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body)
-		if body.Message != "" {
+		if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body) == nil && body.Message != "" {
 			return fmt.Errorf("Render: %s", body.Message)
 		}
 		return fmt.Errorf("Render answered %s", resp.Status)
@@ -105,7 +104,9 @@ func list[T any](ctx context.Context, c *Client, path string, query url.Values) 
 		var last struct {
 			Cursor string `json:"cursor"`
 		}
-		json.Unmarshal(page[len(page)-1], &last)
+		if err := json.Unmarshal(page[len(page)-1], &last); err != nil {
+			return nil, err
+		}
 		if last.Cursor == "" {
 			break
 		}
